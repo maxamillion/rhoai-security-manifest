@@ -28,6 +28,10 @@ The OpenShift AI Security Manifest Tool is a command-line utility designed to ge
 - Security: bandit, safety
 - Formatting: black, isort
 
+**Python Package**
+- Name: rhoai_security_manifest
+- Version: 1.0
+
 ### 4. Functional Requirements
 
 #### 4.1 Core Features
