@@ -16,33 +16,33 @@ install-dev: ## Install development dependencies
 	$(UV) pip install -e ".[dev]"
 
 test: ## Run tests
-	pytest -v
+	$(UV) run pytest -v
 
 test-cov: ## Run tests with coverage
-	pytest -v --cov=$(PACKAGE_NAME) --cov-report=term-missing --cov-report=html
+	$(UV) run pytest -v --cov=$(PACKAGE_NAME) --cov-report=term-missing --cov-report=html
 
 test-unit: ## Run unit tests only
-	pytest -v -m "unit" tests/
+	$(UV) run pytest -v -m "unit" tests/
 
 test-integration: ## Run integration tests only
-	pytest -v -m "integration" tests/
+	$(UV) run pytest -v -m "integration" tests/
 
 lint: ## Run linting tools
-	ruff check $(PACKAGE_NAME) tests/
-	black --check $(PACKAGE_NAME) tests/
-	isort --check-only $(PACKAGE_NAME) tests/
+	$(UV) run ruff check $(PACKAGE_NAME) tests/
+	$(UV) run black --check $(PACKAGE_NAME) tests/
+	$(UV) run isort --check-only $(PACKAGE_NAME) tests/
 
 format: ## Format code
-	black $(PACKAGE_NAME) tests/
-	isort $(PACKAGE_NAME) tests/
-	ruff check --fix $(PACKAGE_NAME) tests/
+	$(UV) run black $(PACKAGE_NAME) tests/
+	$(UV) run isort $(PACKAGE_NAME) tests/
+	$(UV) run ruff check --fix $(PACKAGE_NAME) tests/
 
 type-check: ## Run type checking
-	mypy $(PACKAGE_NAME)
+	$(UV) run mypy $(PACKAGE_NAME)
 
 security: ## Run security checks
-	bandit -r $(PACKAGE_NAME)
-	safety check
+	$(UV) run bandit -r $(PACKAGE_NAME)
+	$(UV) run safety check
 
 quality: lint type-check security ## Run all quality checks
 
@@ -64,16 +64,16 @@ clean: ## Clean build artifacts
 	find . -type f -name "*.pyc" -delete
 
 setup-dev: install-dev ## Setup development environment
-	pre-commit install
+	$(UV) run pre-commit install
 	@echo "Development environment setup complete!"
 
 validate: ## Validate project setup
 	$(UV) pip check
-	pytest --collect-only -q
+	$(UV) run pytest --collect-only -q
 	@echo "Project validation complete!"
 
 run-cli: ## Run the CLI tool (example)
-	$(PYTHON) -m $(PACKAGE_NAME).cli.main --help
+	$(UV) run python -m $(PACKAGE_NAME).cli.main --help
 
 docker-build: ## Build Docker image
 	docker build -t rhoai-security-manifest:latest .
