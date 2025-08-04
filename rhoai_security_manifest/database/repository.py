@@ -228,6 +228,40 @@ class VulnerabilityRepository:
             .all()
         )
 
+    def bulk_insert_vulnerabilities(self, container_id: int, security_info) -> int:
+        """Bulk insert vulnerabilities for a container.
+        
+        Args:
+            container_id: Container ID to associate vulnerabilities with
+            security_info: ContainerSecurityInfo object containing vulnerability data
+            
+        Returns:
+            Number of vulnerabilities inserted
+        """
+        # First, clear existing vulnerabilities for this container
+        self.session.query(Vulnerability).filter(
+            Vulnerability.container_id == container_id
+        ).delete()
+        
+        # Insert new vulnerabilities
+        vulnerabilities_inserted = 0
+        for vuln_data in security_info.vulnerabilities:
+            vulnerability = Vulnerability(
+                container_id=container_id,
+                cve_id=vuln_data.cve_id,
+                severity=vuln_data.severity.value,
+                cvss_score=vuln_data.cvss_score,
+                description=vuln_data.description,
+                fixed_in_version=vuln_data.fixed_in_version,
+                status="new",
+                first_seen=datetime.utcnow(),
+            )
+            self.session.add(vulnerability)
+            vulnerabilities_inserted += 1
+        
+        self.session.commit()
+        return vulnerabilities_inserted
+
 
 class PackageRepository:
     """Repository for Package model operations."""
