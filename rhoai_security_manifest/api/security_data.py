@@ -67,7 +67,7 @@ class SecurityAdvisory(BaseModel):
 
 class RPMPackage(BaseModel):
     """RPM package information from container manifest."""
-    
+
     name: str
     version: str
     release: str
@@ -77,13 +77,13 @@ class RPMPackage(BaseModel):
     size: Optional[int] = None
     license: Optional[str] = None
     vendor: Optional[str] = None
-    
+
     @property
     def nevra(self) -> str:
         """Get NEVRA (Name-Epoch:Version-Release.Architecture) string."""
         epoch_str = f"{self.epoch}:" if self.epoch else ""
         return f"{self.name}-{epoch_str}{self.version}-{self.release}.{self.arch}"
-    
+
     @property
     def nvr(self) -> str:
         """Get NVR (Name-Version-Release) string."""
@@ -92,13 +92,13 @@ class RPMPackage(BaseModel):
 
 class ContainerManifest(BaseModel):
     """Container image manifest with RPM packages."""
-    
+
     image_id: str
     image_digest: str
     packages: List[RPMPackage] = Field(default_factory=list)
     content_sets: List[str] = Field(default_factory=list)
     build_date: Optional[datetime] = None
-    
+
     @property
     def package_count(self) -> int:
         """Get total number of packages."""
@@ -124,7 +124,7 @@ class ContainerSecurityInfo(BaseModel):
         for vuln in self.vulnerabilities:
             summary[vuln.severity.value] += 1
         return summary
-    
+
     @property
     def affected_package_count(self) -> int:
         """Get count of packages with vulnerabilities."""
@@ -246,112 +246,120 @@ class SecurityDataClient:
         self, package_name: str, package_version: str, package_release: str
     ) -> List[CVEData]:
         """Get vulnerabilities for a specific RPM package.
-        
+
         Args:
             package_name: Name of the package
             package_version: Package version
             package_release: Package release
-            
+
         Returns:
             List of CVEs affecting this package
         """
-        logger.debug(f"Checking vulnerabilities for {package_name}-{package_version}-{package_release}")
-        
+        logger.debug(
+            f"Checking vulnerabilities for {package_name}-{package_version}-{package_release}"
+        )
+
         # Search for CVEs related to this package
         # Use package name and version in the query
         search_query = f"{package_name} {package_version}"
-        
+
         try:
             # For demo purposes, return simulated vulnerabilities for known packages
             # In production, this would query the actual API
             demo_vulns = []
-            
+
             # Simulate some vulnerabilities for common packages
             if package_name == "openssl-libs" and "1.1.1k" in package_version:
-                demo_vulns.append(CVEData(
-                    cve_id="CVE-2023-0286",
-                    severity=Severity.HIGH,
-                    cvss_score=7.4,
-                    description=f"OpenSSL vulnerability affecting {package_name}",
-                    published_date=datetime.now(),
-                    package_name=package_name,
-                    package_version=f"{package_version}-{package_release}"
-                ))
+                demo_vulns.append(
+                    CVEData(
+                        cve_id="CVE-2023-0286",
+                        severity=Severity.HIGH,
+                        cvss_score=7.4,
+                        description=f"OpenSSL vulnerability affecting {package_name}",
+                        published_date=datetime.now(),
+                        package_name=package_name,
+                        package_version=f"{package_version}-{package_release}",
+                    )
+                )
             elif package_name == "glibc" and "2.28" in package_version:
-                demo_vulns.append(CVEData(
-                    cve_id="CVE-2023-4911",
-                    severity=Severity.HIGH,
-                    cvss_score=7.8,
-                    description=f"GNU C Library buffer overflow in {package_name}",
-                    published_date=datetime.now(),
-                    package_name=package_name,
-                    package_version=f"{package_version}-{package_release}"
-                ))
+                demo_vulns.append(
+                    CVEData(
+                        cve_id="CVE-2023-4911",
+                        severity=Severity.HIGH,
+                        cvss_score=7.8,
+                        description=f"GNU C Library buffer overflow in {package_name}",
+                        published_date=datetime.now(),
+                        package_name=package_name,
+                        package_version=f"{package_version}-{package_release}",
+                    )
+                )
             elif package_name == "systemd" and "239" in package_version:
-                demo_vulns.append(CVEData(
-                    cve_id="CVE-2023-26604",
-                    severity=Severity.MEDIUM,
-                    cvss_score=5.5,
-                    description=f"systemd denial of service vulnerability in {package_name}",
-                    published_date=datetime.now(),
-                    package_name=package_name,
-                    package_version=f"{package_version}-{package_release}"
-                ))
-            
+                demo_vulns.append(
+                    CVEData(
+                        cve_id="CVE-2023-26604",
+                        severity=Severity.MEDIUM,
+                        cvss_score=5.5,
+                        description=f"systemd denial of service vulnerability in {package_name}",
+                        published_date=datetime.now(),
+                        package_name=package_name,
+                        package_version=f"{package_version}-{package_release}",
+                    )
+                )
+
             return demo_vulns
         except Exception as e:
             logger.warning(f"Failed to get vulnerabilities for {package_name}: {e}")
             return []
-    
+
     async def analyze_container_packages(
         self, container_manifest: "ContainerManifest", include_details: bool = False
     ) -> ContainerSecurityInfo:
         """Analyze security of all packages in a container.
-        
+
         Args:
             container_manifest: Container manifest with RPM packages
             include_details: Whether to include detailed package information
-            
+
         Returns:
             Container security information
         """
         # No need to import ContainerManifest, it's already defined in this file
-        
-        logger.info(f"Analyzing security for {container_manifest.package_count} packages")
-        
+
+        logger.info(
+            f"Analyzing security for {container_manifest.package_count} packages"
+        )
+
         all_vulnerabilities = []
         vulnerable_packages = {}
-        
+
         # Analyze each package
         tasks = []
         for package in container_manifest.packages:
             task = self.get_package_vulnerabilities(
-                package.name, 
-                package.version, 
-                package.release
+                package.name, package.version, package.release
             )
             tasks.append(task)
-        
+
         # Execute vulnerability checks in parallel
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Process results
         for i, result in enumerate(results):
             package = container_manifest.packages[i]
-            
+
             if isinstance(result, Exception):
                 logger.warning(f"Failed to analyze {package.name}: {result}")
                 continue
-                
+
             if result:  # Has vulnerabilities
                 all_vulnerabilities.extend(result)
                 vulnerable_packages[package.nvr] = result
-        
+
         # Get related advisories
         advisories = await self._get_advisories_for_packages(
             [p.name for p in container_manifest.packages]
         )
-        
+
         return ContainerSecurityInfo(
             container_name=container_manifest.image_id,
             digest=container_manifest.image_digest,
@@ -391,11 +399,11 @@ class SecurityDataClient:
         self, containers: List[Dict[str, str]], include_packages: bool = False
     ) -> List[ContainerSecurityInfo]:
         """Legacy method - kept for compatibility but logs deprecation warning.
-        
+
         This method is deprecated. The new workflow requires:
         1. Fetching container manifests with RPM packages
         2. Analyzing packages individually for vulnerabilities
-        
+
         Args:
             containers: List of container dicts with 'name' and 'digest' keys
             include_packages: Whether to include package-level details
@@ -408,7 +416,7 @@ class SecurityDataClient:
             "Use catalog_client.get_rpm_manifest() followed by "
             "security_client.analyze_container_packages() instead."
         )
-        
+
         # Return empty results for now to avoid breaking existing code
         return [
             ContainerSecurityInfo(
@@ -455,7 +463,7 @@ class SecurityDataClient:
         # In production, this would query the actual API
         logger.debug(f"Would query advisories for {len(package_names)} packages")
         return []
-    
+
     async def _get_related_advisories(
         self, container_name: str
     ) -> List[SecurityAdvisory]:
@@ -491,19 +499,21 @@ class SecurityDataClient:
 
         # Log request details in debug mode
         request_headers = dict(self._client.headers)
-        request_headers.update(kwargs.get('headers', {}))
-        request_content = kwargs.get('content') or kwargs.get('data')
-        if request_content and hasattr(request_content, 'decode'):
-            request_content = request_content.decode('utf-8', errors='ignore')
+        request_headers.update(kwargs.get("headers", {}))
+        request_content = kwargs.get("content") or kwargs.get("data")
+        if request_content and hasattr(request_content, "decode"):
+            request_content = request_content.decode("utf-8", errors="ignore")
 
         for attempt in range(self.max_retries + 1):
-            with debug_http_request(method, url, params, request_headers, request_content) as debug_ctx:
+            with debug_http_request(
+                method, url, params, request_headers, request_content
+            ) as debug_ctx:
                 try:
                     response = await self._client.request(
                         method, url, params=params, **kwargs
                     )
                     response.raise_for_status()
-                    
+
                     # Log successful response in debug mode
                     debug_ctx.log_response(response)
                     return response

@@ -230,11 +230,11 @@ class VulnerabilityRepository:
 
     def bulk_insert_vulnerabilities(self, container_id: int, security_info) -> int:
         """Bulk insert vulnerabilities for a container.
-        
+
         Args:
             container_id: Container ID to associate vulnerabilities with
             security_info: ContainerSecurityInfo object containing vulnerability data
-            
+
         Returns:
             Number of vulnerabilities inserted
         """
@@ -242,7 +242,7 @@ class VulnerabilityRepository:
         self.session.query(Vulnerability).filter(
             Vulnerability.container_id == container_id
         ).delete()
-        
+
         # Insert new vulnerabilities
         vulnerabilities_inserted = 0
         for vuln_data in security_info.vulnerabilities:
@@ -258,7 +258,7 @@ class VulnerabilityRepository:
             )
             self.session.add(vulnerability)
             vulnerabilities_inserted += 1
-        
+
         self.session.commit()
         return vulnerabilities_inserted
 

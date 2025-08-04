@@ -1,7 +1,6 @@
 """Basic test to verify test setup works."""
 
 
-
 def test_basic_functionality():
     """Test that basic functionality works."""
     assert True

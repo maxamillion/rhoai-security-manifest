@@ -22,11 +22,11 @@ logger = get_logger("analysis.orchestrator")
 
 def load_container_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
     """Load container configuration from YAML file.
-    
+
     Args:
-        config_path: Optional path to configuration file. 
+        config_path: Optional path to configuration file.
                      Defaults to config/containers.yaml
-    
+
     Returns:
         Dictionary containing container configuration
     """
@@ -37,7 +37,7 @@ def load_container_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
             Path(__file__).parent.parent.parent / "config" / "containers.yaml",
             Path.cwd() / "config" / "containers.yaml",
         ]
-        
+
         for path in possible_paths:
             if path.exists():
                 config_path = path
@@ -45,9 +45,9 @@ def load_container_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
         else:
             logger.warning("No container configuration file found")
             return {}
-    
+
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path, "r") as f:
             config = yaml.safe_load(f) or {}
             logger.info(f"Loaded container configuration from {config_path}")
             return config
@@ -176,16 +176,20 @@ class SecurityAnalysisOrchestrator:
             # Load manual container configuration
             container_config = load_container_config()
             manual_containers = None
-            
+
             # Check if we have manual containers defined for this release
-            if container_config and 'rhoai_containers' in container_config:
-                if release_version in container_config['rhoai_containers']:
-                    manual_containers = container_config['rhoai_containers'][release_version]
-                    logger.info(f"Using manual container configuration for release {release_version}")
-            
+            if container_config and "rhoai_containers" in container_config:
+                if release_version in container_config["rhoai_containers"]:
+                    manual_containers = container_config["rhoai_containers"][
+                        release_version
+                    ]
+                    logger.info(
+                        f"Using manual container configuration for release {release_version}"
+                    )
+
             # Use configuration setting for hybrid discovery (fallback to True if no config)
             hybrid_discovery = True
-            if self.config and hasattr(self.config, 'discovery'):
+            if self.config and hasattr(self.config, "discovery"):
                 hybrid_discovery = self.config.discovery.hybrid_discovery
             containers = await self.catalog_client.discover_rhoai_containers(
                 release_version, container_filter, manual_containers, hybrid_discovery
@@ -246,99 +250,169 @@ class SecurityAnalysisOrchestrator:
             return self._load_cached_security_data(containers)
 
         from ..api.security_data import ContainerManifest, RPMPackage
-        
+
         security_analyses = []
-        
+
         for container in containers:
             try:
                 logger.info(f"Analyzing container: {container.name}")
-                
+
                 # Step 1: Get container image details
-                image_details = await self.catalog_client.get_image_by_id(container.digest)
+                image_details = await self.catalog_client.get_image_by_id(
+                    container.digest
+                )
                 if not image_details:
-                    logger.warning(f"No image details found for {container.name}, trying alternate methods")
+                    logger.warning(
+                        f"No image details found for {container.name}, trying alternate methods"
+                    )
                     # Try with container name as ID
-                    image_details = await self.catalog_client.get_image_by_id(container.name)
-                
+                    image_details = await self.catalog_client.get_image_by_id(
+                        container.name
+                    )
+
                 # Step 2: Get RPM manifest for the container
                 rpm_manifest = None
-                if image_details and image_details.get('_id'):
-                    rpm_manifest = await self.catalog_client.get_rpm_manifest(image_details['_id'])
-                
+                if image_details and image_details.get("_id"):
+                    rpm_manifest = await self.catalog_client.get_rpm_manifest(
+                        image_details["_id"]
+                    )
+
                 if not rpm_manifest:
-                    logger.warning(f"No RPM manifest found for {container.name}, using demo data")
+                    logger.warning(
+                        f"No RPM manifest found for {container.name}, using demo data"
+                    )
                     # Create demo manifest with sample packages to demonstrate the workflow
                     # In production, this would come from the actual API
                     demo_packages = []
-                    
+
                     # Add some common packages that would typically be in a container
                     if "notebook" in container.name:
-                        demo_packages.extend([
-                            RPMPackage(name="python3", version="3.9.16", release="1.el8", arch="x86_64"),
-                            RPMPackage(name="python3-pip", version="21.2.4", release="7.el8", arch="x86_64"),
-                            RPMPackage(name="jupyter-core", version="4.11.1", release="1.el8", arch="noarch"),
-                        ])
+                        demo_packages.extend(
+                            [
+                                RPMPackage(
+                                    name="python3",
+                                    version="3.9.16",
+                                    release="1.el8",
+                                    arch="x86_64",
+                                ),
+                                RPMPackage(
+                                    name="python3-pip",
+                                    version="21.2.4",
+                                    release="7.el8",
+                                    arch="x86_64",
+                                ),
+                                RPMPackage(
+                                    name="jupyter-core",
+                                    version="4.11.1",
+                                    release="1.el8",
+                                    arch="noarch",
+                                ),
+                            ]
+                        )
                     elif "tensorflow" in container.name:
-                        demo_packages.extend([
-                            RPMPackage(name="tensorflow", version="2.11.0", release="1.el8", arch="x86_64"),
-                            RPMPackage(name="python3-numpy", version="1.21.6", release="1.el8", arch="x86_64"),
-                        ])
+                        demo_packages.extend(
+                            [
+                                RPMPackage(
+                                    name="tensorflow",
+                                    version="2.11.0",
+                                    release="1.el8",
+                                    arch="x86_64",
+                                ),
+                                RPMPackage(
+                                    name="python3-numpy",
+                                    version="1.21.6",
+                                    release="1.el8",
+                                    arch="x86_64",
+                                ),
+                            ]
+                        )
                     elif "pytorch" in container.name:
-                        demo_packages.extend([
-                            RPMPackage(name="pytorch", version="2.0.1", release="1.el8", arch="x86_64"),
-                            RPMPackage(name="python3-torch", version="2.0.1", release="1.el8", arch="x86_64"),
-                        ])
-                    
+                        demo_packages.extend(
+                            [
+                                RPMPackage(
+                                    name="pytorch",
+                                    version="2.0.1",
+                                    release="1.el8",
+                                    arch="x86_64",
+                                ),
+                                RPMPackage(
+                                    name="python3-torch",
+                                    version="2.0.1",
+                                    release="1.el8",
+                                    arch="x86_64",
+                                ),
+                            ]
+                        )
+
                     # Add common base packages
-                    demo_packages.extend([
-                        RPMPackage(name="glibc", version="2.28", release="236.el8", arch="x86_64"),
-                        RPMPackage(name="openssl-libs", version="1.1.1k", release="9.el8", arch="x86_64"),
-                        RPMPackage(name="systemd", version="239", release="74.el8", arch="x86_64"),
-                    ])
-                    
+                    demo_packages.extend(
+                        [
+                            RPMPackage(
+                                name="glibc",
+                                version="2.28",
+                                release="236.el8",
+                                arch="x86_64",
+                            ),
+                            RPMPackage(
+                                name="openssl-libs",
+                                version="1.1.1k",
+                                release="9.el8",
+                                arch="x86_64",
+                            ),
+                            RPMPackage(
+                                name="systemd",
+                                version="239",
+                                release="74.el8",
+                                arch="x86_64",
+                            ),
+                        ]
+                    )
+
                     container_manifest = ContainerManifest(
                         image_id=container.name,
                         image_digest=container.digest,
                         packages=demo_packages,
-                        content_sets=["rhel-8-for-x86_64-baseos-rpms", "rhel-8-for-x86_64-appstream-rpms"],
-                        build_date=container.created_at
+                        content_sets=[
+                            "rhel-8-for-x86_64-baseos-rpms",
+                            "rhel-8-for-x86_64-appstream-rpms",
+                        ],
+                        build_date=container.created_at,
                     )
                 else:
                     # Parse RPM manifest
                     packages = []
-                    for rpm in rpm_manifest.get('rpms', []):
+                    for rpm in rpm_manifest.get("rpms", []):
                         package = RPMPackage(
-                            name=rpm.get('name', ''),
-                            version=rpm.get('version', ''),
-                            release=rpm.get('release', ''),
-                            epoch=rpm.get('epoch'),
-                            arch=rpm.get('architecture', 'x86_64'),
-                            source_rpm=rpm.get('srpm'),
-                            size=rpm.get('size'),
-                            license=rpm.get('license'),
-                            vendor=rpm.get('vendor')
+                            name=rpm.get("name", ""),
+                            version=rpm.get("version", ""),
+                            release=rpm.get("release", ""),
+                            epoch=rpm.get("epoch"),
+                            arch=rpm.get("architecture", "x86_64"),
+                            source_rpm=rpm.get("srpm"),
+                            size=rpm.get("size"),
+                            license=rpm.get("license"),
+                            vendor=rpm.get("vendor"),
                         )
                         packages.append(package)
-                    
+
                     container_manifest = ContainerManifest(
                         image_id=container.name,
                         image_digest=container.digest,
                         packages=packages,
-                        content_sets=rpm_manifest.get('content_sets', []),
-                        build_date=container.created_at
+                        content_sets=rpm_manifest.get("content_sets", []),
+                        build_date=container.created_at,
                     )
-                
+
                 # Step 3: Analyze security of packages
                 security_info = await self.security_client.analyze_container_packages(
-                    container_manifest,
-                    include_details=include_packages
+                    container_manifest, include_details=include_packages
                 )
-                
+
                 # Update container name to match input
                 security_info.container_name = container.name
-                
+
                 security_analyses.append(security_info)
-                
+
             except Exception as e:
                 logger.error(f"Failed to analyze container {container.name}: {e}")
                 # Create empty security info for failed containers
@@ -348,7 +422,7 @@ class SecurityAnalysisOrchestrator:
                     vulnerabilities=[],
                     advisories=[],
                     packages_scanned=0,
-                    last_updated=datetime.now()
+                    last_updated=datetime.now(),
                 )
                 security_analyses.append(security_info)
 
@@ -589,8 +663,8 @@ async def create_orchestrator(config) -> SecurityAnalysisOrchestrator:
     grader = create_grader()
 
     return SecurityAnalysisOrchestrator(
-        catalog_client=catalog_client, 
-        security_client=security_client, 
+        catalog_client=catalog_client,
+        security_client=security_client,
         grader=grader,
-        config=config
+        config=config,
     )
