@@ -86,11 +86,14 @@ class ContainerCatalogClient:
     ) -> CatalogSearchResult:
         """Search for containers in the catalog.
 
+        Note: The Red Hat Container Catalog API doesn't support query parameters.
+        This method now fetches all containers and filters locally.
+
         Args:
-            query: Search query string
+            query: Search query string (used for local filtering)
             page: Page number (1-based)
             page_size: Number of results per page
-            filter_params: Additional filter parameters
+            filter_params: Additional filter parameters (used for local filtering)
 
         Returns:
             Search results with container metadata
@@ -101,26 +104,34 @@ class ContainerCatalogClient:
         async with self._semaphore:
             url = urljoin(self.base_url, "repositories")
 
+            # The API only supports page and page_size parameters
             params = {
-                "q": query,
                 "page": page,
                 "page_size": min(page_size, 100),  # API limit
             }
 
-            if filter_params:
-                params.update(filter_params)
-
-            logger.debug(f"Searching containers: query='{query}', page={page}")
+            logger.info(f"Fetching containers: page={page}, will filter locally for query='{query}'")
 
             response = await self._make_request("GET", url, params=params)
             data = response.json()
 
-            # Parse response data
+            # Parse response data and filter locally
             images = []
+            total_items = len(data.get("data", []))
+            logger.debug(f"API returned {total_items} items on page {page}")
+            
             for item in data.get("data", []):
                 try:
-                    image = self._parse_container_data(item)
-                    images.append(image)
+                    # Log some details about each item for debugging
+                    repo = item.get("repository", "")
+                    namespace = item.get("namespace", "")
+                    if page == 1 and len(images) < 3:  # Log first few items on first page
+                        logger.debug(f"Item: namespace={namespace}, repository={repo}")
+                    
+                    # Check if this item matches our search criteria
+                    if self._matches_search_criteria(item, query, filter_params):
+                        image = self._parse_container_data(item)
+                        images.append(image)
                 except Exception as e:
                     logger.warning(f"Failed to parse container data: {e}")
                     continue
@@ -157,24 +168,69 @@ class ContainerCatalogClient:
                 raise
 
     async def discover_rhoai_containers(
-        self, release_version: str, filter_names: Optional[List[str]] = None
+        self, release_version: str, filter_names: Optional[List[str]] = None,
+        manual_containers: Optional[List[Dict[str, str]]] = None
     ) -> List[ContainerImage]:
         """Discover all RHOAI containers for a specific release.
 
         Args:
             release_version: RHOAI release version (e.g., "2.8.0")
             filter_names: Optional list of container names to filter by
+            manual_containers: Optional list of manually specified containers
 
         Returns:
             List of container images for the release
         """
         logger.info(f"Discovering RHOAI containers for release {release_version}")
+        
+        # If manual containers are provided, use them
+        if manual_containers:
+            logger.info(f"Using {len(manual_containers)} manually configured containers for release {release_version}")
+            all_containers = []
+            for container_spec in manual_containers:
+                try:
+                    # Create ContainerImage from manual specification
+                    namespace = container_spec.get("namespace", "")
+                    repository = container_spec.get("repository", "")
+                    registry = container_spec.get("registry", "registry.redhat.io")
+                    
+                    container = ContainerImage(
+                        name=repository,
+                        registry_url=f"{registry}/{namespace}/{repository}",
+                        digest=f"manual-{namespace}-{repository}",
+                        tag=release_version,
+                        created_at=datetime.now(),
+                        architecture="x86_64"
+                    )
+                    
+                    # Apply name filter if specified
+                    if filter_names and not any(
+                        name.lower() in container.name.lower() for name in filter_names
+                    ):
+                        logger.debug(f"Skipping container {repository} - doesn't match filter")
+                        continue
+                        
+                    all_containers.append(container)
+                    logger.debug(f"Added manual container: {container.registry_url}")
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to process manual container spec: {e}")
+                    
+            logger.info(f"Successfully loaded {len(all_containers)} containers from manual configuration")
+            
+            if not all_containers:
+                raise ValueError(f"No containers found for release {release_version} in manual configuration")
+                
+            return all_containers
 
         # Search patterns for RHOAI containers
+        # We'll search for these patterns without the version first, then check version match
         search_patterns = [
-            f"rhoai {release_version}",
-            f"openshift-ai {release_version}",
-            f"rhods {release_version}",  # Legacy name
+            "rhoai",
+            "openshift-ai", 
+            "rhods",  # Legacy name
+            "red hat openshift ai",
+            "openshift data science",  # Another possible name
         ]
 
         all_containers = []
@@ -183,14 +239,21 @@ class ContainerCatalogClient:
         for pattern in search_patterns:
             try:
                 page = 1
-                while True:
+                consecutive_empty_pages = 0
+                
+                while consecutive_empty_pages < 3:  # Stop after 3 consecutive empty result pages
                     result = await self.search_containers(
                         query=pattern,
                         page=page,
                         page_size=100,
-                        filter_params={"vendor": "redhat", "architecture": "x86_64"},
+                        filter_params={"vendor": "redhat"},  # Remove architecture filter for now
                     )
 
+                    # Count how many containers we found on this page
+                    page_containers = 0
+                    
+                    logger.debug(f"Page {page}: Found {len(result.images)} containers matching '{pattern}'")
+                    
                     # Filter containers
                     for container in result.images:
                         # Avoid duplicates
@@ -199,20 +262,36 @@ class ContainerCatalogClient:
 
                         # Apply name filter if specified
                         if filter_names and not any(
-                            name in container.name.lower() for name in filter_names
+                            name.lower() in container.name.lower() for name in filter_names
                         ):
                             continue
 
+                        # Log what we're checking
+                        logger.debug(f"Checking container: {container.name} for release {release_version}")
+                        
                         # Verify this is actually for the requested release
                         if self._is_release_match(container, release_version):
+                            logger.info(f"Found matching container: {container.name}")
                             all_containers.append(container)
                             seen_digests.add(container.digest)
+                            page_containers += 1
 
-                    # Check if we have more pages
-                    if len(result.images) < result.page_size:
+                    # Track empty pages
+                    if page_containers == 0:
+                        consecutive_empty_pages += 1
+                    else:
+                        consecutive_empty_pages = 0
+
+                    # Check if we've reached the end of results
+                    if result.total > 0 and page * result.page_size >= result.total:
                         break
 
                     page += 1
+                    
+                    # Safety limit to prevent infinite loops
+                    if page > 100:
+                        logger.warning(f"Reached page limit for pattern '{pattern}'")
+                        break
 
             except Exception as e:
                 logger.warning(f"Failed to search with pattern '{pattern}': {e}")
@@ -242,6 +321,124 @@ class ContainerCatalogClient:
                 if e.response.status_code == 404:
                     logger.warning(f"No vulnerability data found for: {container_id}")
                     return {}
+                raise
+    
+    async def get_image_by_id(self, image_id: str) -> Optional[Dict[str, Any]]:
+        """Get detailed image information by image ID using GraphQL endpoint.
+        
+        Args:
+            image_id: Image identifier
+            
+        Returns:
+            Image metadata or None if not found
+        """
+        # For manual containers, skip API call
+        if image_id.startswith("manual-"):
+            logger.debug(f"Skipping API call for manual container: {image_id}")
+            return None
+            
+        async with self._semaphore:
+            # Try different API endpoints
+            endpoints = [
+                f"images/by_id?image_id={image_id}",
+                f"images/{image_id}",
+                f"repositories/registry/access.redhat.com/rhoai/{image_id}"
+            ]
+            
+            for endpoint in endpoints:
+                try:
+                    url = urljoin(self.base_url, endpoint)
+                    response = await self._make_request("GET", url)
+                    data = response.json()
+                    
+                    # Different endpoints may return data in different formats
+                    if "data" in data:
+                        return data.get("data", {}).get("image") or data.get("data")
+                    elif "_id" in data:
+                        return data
+                    elif "repository" in data:
+                        return data
+                        
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        continue  # Try next endpoint
+                    # For other errors, log but continue
+                    logger.debug(f"Error with endpoint {endpoint}: {e}")
+                    continue
+            
+            logger.warning(f"Image not found with any endpoint: {image_id}")
+            return None
+    
+    async def get_rpm_manifest(self, image_id: str) -> Optional[Dict[str, Any]]:
+        """Get RPM manifest for a container image.
+        
+        Args:
+            image_id: Image identifier
+            
+        Returns:
+            RPM manifest data or None if not found
+        """
+        # For manual containers, skip API call
+        if image_id.startswith("manual-"):
+            logger.debug(f"Skipping RPM manifest API call for manual container: {image_id}")
+            return None
+            
+        async with self._semaphore:
+            # Try different API endpoints for RPM manifest
+            endpoints = [
+                f"images/rpm_manifest?image_id={image_id}",
+                f"images/{image_id}/rpm-manifest",
+                f"repositories/{image_id}/manifest"
+            ]
+            
+            for endpoint in endpoints:
+                try:
+                    url = urljoin(self.base_url, endpoint)
+                    response = await self._make_request("GET", url)
+                    data = response.json()
+                    
+                    # Different endpoints may return data in different formats
+                    if "data" in data and "rpm_manifest" in data["data"]:
+                        return data["data"]["rpm_manifest"]
+                    elif "rpms" in data:
+                        return data
+                    elif "manifest" in data:
+                        return data["manifest"]
+                        
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        continue  # Try next endpoint
+                    logger.debug(f"Error with endpoint {endpoint}: {e}")
+                    continue
+            
+            logger.debug(f"No RPM manifest found with any endpoint for: {image_id}")
+            return None
+    
+    async def get_image_vulnerabilities(self, image_id: str) -> List[Dict[str, Any]]:
+        """Get vulnerabilities for a specific image using GraphQL endpoint.
+        
+        Args:
+            image_id: Image identifier
+            
+        Returns:
+            List of vulnerabilities
+        """
+        async with self._semaphore:
+            # Use the GraphQL endpoint for vulnerabilities
+            url = urljoin(self.base_url, "images/vulnerabilities")
+            
+            try:
+                response = await self._make_request(
+                    "GET",
+                    url,
+                    params={"image_id": image_id}
+                )
+                data = response.json()
+                return data.get("data", {}).get("vulnerabilities", [])
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    logger.warning(f"No vulnerabilities found for image: {image_id}")
+                    return []
                 raise
 
     async def _make_request(
@@ -277,13 +474,13 @@ class ContainerCatalogClient:
                 if attempt < self.max_retries:
                     # Calculate backoff delay
                     delay = 2**attempt + (attempt * 0.1)
-                    logger.warning(
+                    logger.debug(
                         f"Request failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}"
                     )
                     logger.debug(f"Retrying in {delay:.1f} seconds...")
                     await asyncio.sleep(delay)
                 else:
-                    logger.error(
+                    logger.debug(
                         f"Request failed after {self.max_retries + 1} attempts: {e}"
                     )
 
@@ -300,18 +497,25 @@ class ContainerCatalogClient:
             Parsed container image object
         """
         # Extract basic information
-        name = data.get("name", "")
-        registry_url = data.get("registry_url", "")
+        # The API returns repository path, not just name
+        repository = data.get("repository", "")
+        name = repository.split("/")[-1] if repository else data.get("name", "")
+        
+        # Build registry URL
+        registry = data.get("registry", "registry.access.redhat.com")
+        registry_url = f"{registry}/{repository}" if repository else data.get("registry_url", "")
 
         # Extract digest - may be in different locations
         digest = (
             data.get("digest")
             or data.get("image_digest")
             or data.get("content_sets", [{}])[0].get("digest", "")
+            or f"unknown-{repository}"  # Fallback digest
         )
 
-        # Extract tag
-        tag = data.get("tag", "latest")
+        # Extract tag - look in content_stream_tags
+        tags = data.get("content_stream_tags", [])
+        tag = tags[0] if tags else data.get("tag", "latest")
 
         # Parse creation date
         created_str = data.get("creation_date") or data.get("created_at")
@@ -324,7 +528,7 @@ class ContainerCatalogClient:
 
         # Extract additional metadata
         architecture = data.get("architecture", "x86_64")
-        size_bytes = data.get("size_bytes")
+        size_bytes = data.get("total_size_bytes") or data.get("size_bytes")
         layers = data.get("layers", [])
         labels = data.get("labels", {})
 
@@ -340,6 +544,80 @@ class ContainerCatalogClient:
             labels=labels,
         )
 
+    def _matches_search_criteria(
+        self, item: Dict[str, Any], query: str, filter_params: Optional[Dict[str, str]] = None
+    ) -> bool:
+        """Check if a repository item matches search criteria.
+
+        Args:
+            item: Raw repository data from API
+            query: Search query string
+            filter_params: Additional filter parameters
+
+        Returns:
+            True if item matches the search criteria
+        """
+        # First check if query matches any text fields
+        query_matched = False
+        if query:
+            # Convert query to lowercase for case-insensitive matching
+            query_lower = query.lower()
+            
+            # Check repository name
+            repo_name = item.get("repository", "").lower()
+            if query_lower in repo_name:
+                query_matched = True
+                
+            # Check namespace
+            namespace = item.get("namespace", "").lower()
+            if query_lower in namespace:
+                query_matched = True
+                
+            # Check description
+            description = item.get("description", "").lower()
+            if query_lower in description:
+                query_matched = True
+                
+            # Check display_data fields
+            display_data = item.get("display_data", {})
+            if query_lower in display_data.get("name", "").lower():
+                query_matched = True
+            if query_lower in display_data.get("short_description", "").lower():
+                query_matched = True
+                
+            # If query didn't match any field, return False
+            if not query_matched:
+                return False
+        
+        # Apply additional filters if provided
+        if filter_params:
+            # Check vendor
+            if "vendor" in filter_params:
+                vendor_label = item.get("vendor_label", "")
+                if filter_params["vendor"] != vendor_label:
+                    return False
+                    
+            # Check architecture
+            if "architecture" in filter_params:
+                architectures = item.get("architectures", [])
+                arch_found = filter_params["architecture"] in architectures
+                
+                # Also check in content_stream_grades for architecture info
+                if not arch_found:
+                    for grade in item.get("content_stream_grades", []):
+                        for image_id in grade.get("image_ids", []):
+                            if image_id.get("arch") == filter_params["architecture"]:
+                                arch_found = True
+                                break
+                        if arch_found:
+                            break
+                            
+                if not arch_found:
+                    return False
+        
+        # If we've passed all checks (query matched if provided, and all filters pass), return True
+        return True
+
     def _is_release_match(
         self, container: ContainerImage, release_version: str
     ) -> bool:
@@ -352,21 +630,35 @@ class ContainerCatalogClient:
         Returns:
             True if container matches the release
         """
-        # Check tag
-        if release_version in container.tag:
+        # For manually configured containers, always assume they match the requested version
+        if container.digest.startswith("manual-"):
+            logger.debug(f"Manual container {container.name} assumed to match version {release_version}")
             return True
-
-        # Check registry URL
-        if release_version in container.registry_url:
-            return True
-
-        # Check labels
-        for key, value in container.labels.items():
-            if release_version in str(value):
+            
+        # Check tag - look for exact version match
+        if container.tag:
+            # Check for exact match or version as part of tag
+            if release_version == container.tag or f"-{release_version}" in container.tag:
+                logger.debug(f"Container {container.name} matches by tag: {container.tag}")
                 return True
 
-        # Default: assume match if no clear indication otherwise
-        return True
+        # Check registry URL for version
+        if release_version in container.registry_url:
+            logger.debug(f"Container {container.name} matches by registry URL")
+            return True
+
+        # Check labels for version information
+        version_keys = ['version', 'release', 'com.redhat.component.version']
+        for key in version_keys:
+            if key in container.labels:
+                label_value = str(container.labels[key])
+                if release_version == label_value or release_version in label_value:
+                    logger.debug(f"Container {container.name} matches by label {key}: {label_value}")
+                    return True
+
+        # If no version information found, log and reject
+        logger.debug(f"Container {container.name} does not match version {release_version}")
+        return False
 
 
 async def create_catalog_client(config) -> ContainerCatalogClient:

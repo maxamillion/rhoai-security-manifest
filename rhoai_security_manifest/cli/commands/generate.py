@@ -136,7 +136,28 @@ def generate(
                 analysis_result = asyncio.run(run_analysis())
             except Exception as e:
                 logger.error(f"Analysis failed: {e}")
-                console.print(f"[red]Analysis failed: {e}[/red]")
+                console.print(f"\n[red]Analysis failed: {e}[/red]")
+                
+                # Provide helpful suggestions based on the error
+                if "400 Bad Request" in str(e):
+                    console.print("\n[yellow]The Red Hat Container Catalog API has changed.[/yellow]")
+                    console.print("[yellow]This tool needs to be updated to work with the new API.[/yellow]")
+                elif "No containers found" in str(e) or (hasattr(e, 'args') and "No containers found" in str(e.args)):
+                    console.print("\n[yellow]No containers were found for this release.[/yellow]")
+                    console.print("[yellow]Possible reasons:[/yellow]")
+                    console.print("  - The release version might not exist yet")
+                    console.print("  - The release might use different naming conventions")
+                    console.print("  - RHOAI containers might require authentication to access")
+                    console.print("  - The manual configuration might be missing containers")
+                    console.print(f"\n[dim]Searched for: RHOAI {release}[/dim]")
+                    console.print("\n[yellow]Suggestions:[/yellow]")
+                    console.print("  - Check the config/containers.yaml file for manual container definitions")
+                    console.print("  - Ensure the release version is defined in the configuration")
+                    console.print("  - Try using --offline mode if you have cached data")
+                    console.print("  - Use --containers flag to filter specific container names")
+                    console.print("\n[cyan]Manual configuration location:[/cyan] config/containers.yaml")
+                    console.print("[cyan]To add containers:[/cyan] Edit the file and add container definitions under your release version")
+                
                 raise click.Abort()
 
             progress.update(task, description="Generating report...")

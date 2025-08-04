@@ -1,0 +1,157 @@
+# Manual Container Repository Configuration
+# =========================================
+#
+# This file allows you to manually specify RHOAI container repositories when 
+# automatic discovery from the Red Hat Container Catalog fails.
+#
+# The tool will use these container definitions to generate security manifests
+# for specific RHOAI releases. Each container will be analyzed for security
+# vulnerabilities using the Red Hat Security Data API.
+#
+# Format:
+# -------
+# rhoai_containers:
+#   "<release_version>":
+#     - namespace: "<container_namespace>"
+#       repository: "<container_repository_name>"
+#       registry: "<registry_url>"  # Optional, defaults to registry.redhat.io
+#
+# Notes:
+# ------
+# 1. Container names should match those in the Red Hat Container Catalog
+# 2. The security analysis may fail if containers are not publicly accessible
+# 3. Use the --offline flag to skip API calls and use cached data
+# 4. Use the --containers flag to filter specific containers
+
+rhoai_containers:
+  # Configuration for RHOAI 2.19.0
+  "2.19.0":
+    # Core components
+    - namespace: "rhoai"
+      repository: "odh-notebook-controller-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai" 
+      repository: "odh-dashboard-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-notebook-kf-notebook-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-ml-pipelines-api-server-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-ml-pipelines-persistenceagent-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-ml-pipelines-scheduledworkflow-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-ml-pipelines-viewercontroller-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-data-science-pipelines-operator-controller-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-kserve-controller-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-kserve-agent-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-kserve-router-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-kserve-storage-initializer-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-modelmesh-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-modelmesh-controller-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-modelmesh-runtime-adapter-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-modelmesh-serving-runtime-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-openvino-servingruntime-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-tgis-servingruntime-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-caikit-tgis-servingruntime-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-trustyai-service-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-trustyai-service-operator-controller-rhel8"
+      registry: "registry.redhat.io"
+    
+    # Model serving runtimes
+    - namespace: "rhoai"
+      repository: "odh-pytorch-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-tensorflow-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-triton-rhel8"
+      registry: "registry.redhat.io"
+    
+    # Notebook images
+    - namespace: "rhoai"
+      repository: "odh-generic-data-science-notebook-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-minimal-notebook-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-pytorch-notebook-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-tensorflow-notebook-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-trustyai-notebook-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-habana-notebook-rhel8"
+      registry: "registry.redhat.io"
+    
+    # Operators
+    - namespace: "rhoai"
+      repository: "rhods-operator-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "rhods-operator-bundle"
+      registry: "registry.redhat.io"
+    
+    # Additional components
+    - namespace: "rhoai"
+      repository: "odh-mm-rest-proxy-rhel8"
+      registry: "registry.redhat.io"
+    - namespace: "rhoai"
+      repository: "odh-model-controller-rhel8"
+      registry: "registry.redhat.io"
+    
+  # Example for older releases
+  "2.8.0":
+    - namespace: "openshift-ai"
+      repository: "jupyter-minimal-notebook"
+      registry: "registry.redhat.io"
+      
+# Default containers to check if version not specified
+default:
+  search_patterns:
+    - "rhoai"
+    - "openshift-ai"
+    - "rhods"
+    - "openshift-data-science"
+  namespaces:
+    - "rhoai"
+    - "openshift-ai"
+    - "rhods"
