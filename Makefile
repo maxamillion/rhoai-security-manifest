@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-cov lint format type-check security clean build
+.PHONY: help install install-dev test test-cov lint format type-check security clean build run
 .DEFAULT_GOAL := help
 
 # Variables
@@ -16,7 +16,7 @@ install-dev: ## Install development dependencies
 	$(UV) pip install -e ".[dev]"
 
 test: ## Run tests
-	$(UV) run pytest -v
+	$(UV) run pytest -v --no-cov
 
 test-cov: ## Run tests with coverage
 	$(UV) run pytest -v --cov=$(PACKAGE_NAME) --cov-report=term-missing --cov-report=html
@@ -71,6 +71,9 @@ validate: ## Validate project setup
 	$(UV) pip check
 	$(UV) run pytest --collect-only -q
 	@echo "Project validation complete!"
+
+run: ## Run the CLI tool for development
+	$(UV) run python -m $(PACKAGE_NAME).cli.main $(ARGS)
 
 run-cli: ## Run the CLI tool (example)
 	$(UV) run python -m $(PACKAGE_NAME).cli.main --help
