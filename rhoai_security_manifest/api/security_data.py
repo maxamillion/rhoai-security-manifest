@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from ..utils.logging import get_logger
+from ..utils.http_debug import debug_http_request
 
 logger = get_logger("api.security_data")
 
@@ -488,27 +489,38 @@ class SecurityDataClient:
         """Make HTTP request with retry logic."""
         last_exception = None
 
+        # Log request details in debug mode
+        request_headers = dict(self._client.headers)
+        request_headers.update(kwargs.get('headers', {}))
+        request_content = kwargs.get('content') or kwargs.get('data')
+        if request_content and hasattr(request_content, 'decode'):
+            request_content = request_content.decode('utf-8', errors='ignore')
+
         for attempt in range(self.max_retries + 1):
-            try:
-                response = await self._client.request(
-                    method, url, params=params, **kwargs
-                )
-                response.raise_for_status()
-                return response
-
-            except httpx.HTTPError as e:
-                last_exception = e
-
-                if attempt < self.max_retries:
-                    delay = 2**attempt + (attempt * 0.1)
-                    logger.warning(
-                        f"Request failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}"
+            with debug_http_request(method, url, params, request_headers, request_content) as debug_ctx:
+                try:
+                    response = await self._client.request(
+                        method, url, params=params, **kwargs
                     )
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(
-                        f"Request failed after {self.max_retries + 1} attempts: {e}"
-                    )
+                    response.raise_for_status()
+                    
+                    # Log successful response in debug mode
+                    debug_ctx.log_response(response)
+                    return response
+
+                except httpx.HTTPError as e:
+                    last_exception = e
+
+                    if attempt < self.max_retries:
+                        delay = 2**attempt + (attempt * 0.1)
+                        logger.warning(
+                            f"Request failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}"
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(
+                            f"Request failed after {self.max_retries + 1} attempts: {e}"
+                        )
 
         raise last_exception
 

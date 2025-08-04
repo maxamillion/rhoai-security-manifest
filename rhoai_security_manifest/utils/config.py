@@ -80,6 +80,23 @@ class ReportConfig(BaseModel):
     )
 
 
+class DiscoveryConfig(BaseModel):
+    """Container discovery configuration settings."""
+
+    hybrid_discovery: bool = Field(
+        default=True, description="Enable hybrid discovery (manual + API)"
+    )
+    api_discovery_enabled: bool = Field(
+        default=True, description="Enable API-based container discovery"
+    )
+    max_search_pages: int = Field(
+        default=100, ge=10, le=500, description="Maximum API search pages per pattern"
+    )
+    search_timeout_minutes: int = Field(
+        default=30, ge=5, le=120, description="Maximum time for container discovery"
+    )
+
+
 class SecurityConfig(BaseModel):
     """Security grading configuration settings."""
 
@@ -143,6 +160,7 @@ class Config(BaseModel):
     api: APIConfig = Field(default_factory=APIConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     reports: ReportConfig = Field(default_factory=ReportConfig)
+    discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
@@ -256,6 +274,10 @@ class ConfigManager:
             # Report settings
             "RHOAI_REPORTS_DIRECTORY": ["reports", "output_directory"],
             "RHOAI_INCLUDE_PACKAGES": ["reports", "include_packages_by_default"],
+            # Discovery settings
+            "RHOAI_HYBRID_DISCOVERY": ["discovery", "hybrid_discovery"],
+            "RHOAI_API_DISCOVERY_ENABLED": ["discovery", "api_discovery_enabled"],
+            "RHOAI_MAX_SEARCH_PAGES": ["discovery", "max_search_pages"],
             # Logging settings
             "RHOAI_LOG_LEVEL": ["logging", "level"],
             "RHOAI_LOG_FILE": ["logging", "file_path"],

@@ -9,6 +9,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from ..utils.logging import get_logger
+from ..utils.http_debug import debug_http_request
 
 logger = get_logger("api.container_catalog")
 
@@ -59,6 +60,10 @@ class ContainerCatalogClient:
         self.max_retries = max_retries
         self.max_concurrent = max_concurrent
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        
+        # Track failed endpoints to avoid repeated 404s
+        self._failed_endpoints = set()
+        self._working_endpoints = set()
 
         # Configure HTTP client
         self._client = httpx.AsyncClient(
@@ -76,6 +81,81 @@ class ContainerCatalogClient:
     async def close(self):
         """Close the HTTP client."""
         await self._client.aclose()
+    
+    async def _try_endpoints_smartly(self, endpoint_patterns: List[str], **format_args) -> Optional[Dict[str, Any]]:
+        """Try multiple endpoints intelligently, skipping known failed ones.
+        
+        Args:
+            endpoint_patterns: List of endpoint URL patterns to try
+            **format_args: Arguments to format into the endpoint patterns
+            
+        Returns:
+            Response data from first successful endpoint, or None if all fail
+        """
+        successful_data = None
+        
+        # First, try any endpoints we know work
+        working_endpoints = [ep for ep in endpoint_patterns 
+                           if ep.format(**format_args) in self._working_endpoints]
+        
+        # Then try unknown endpoints
+        unknown_endpoints = [ep for ep in endpoint_patterns 
+                           if ep.format(**format_args) not in self._working_endpoints 
+                           and ep.format(**format_args) not in self._failed_endpoints]
+        
+        # Finally, try failed endpoints as a last resort (API might have been fixed)
+        failed_endpoints = [ep for ep in endpoint_patterns 
+                          if ep.format(**format_args) in self._failed_endpoints]
+        
+        # Combine in order of preference
+        ordered_endpoints = working_endpoints + unknown_endpoints + failed_endpoints
+        
+        for endpoint_pattern in ordered_endpoints:
+            endpoint = endpoint_pattern.format(**format_args)
+            
+            # Skip if we know this endpoint pattern fails
+            if endpoint in self._failed_endpoints and endpoint not in working_endpoints:
+                logger.debug(f"Skipping known failed endpoint: {endpoint}")
+                continue
+                
+            try:
+                url = urljoin(self.base_url, endpoint)
+                
+                # Use suppress_expected_404 for endpoint exploration
+                with debug_http_request("GET", url, suppress_expected_404=True) as debug_ctx:
+                    response = await self._client.request("GET", url)
+                    response.raise_for_status()
+                    
+                    debug_ctx.log_response(response)
+                    data = response.json()
+                    
+                    # Mark this endpoint as working
+                    self._working_endpoints.add(endpoint)
+                    
+                    # Different endpoints may return data in different formats
+                    if "data" in data:
+                        successful_data = data.get("data", {})
+                        if isinstance(successful_data, dict):
+                            return successful_data.get("image") or successful_data
+                        return successful_data
+                    elif "_id" in data or "repository" in data or "rpms" in data or "manifest" in data:
+                        return data
+                    
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    # Mark this endpoint as failed
+                    self._failed_endpoints.add(endpoint)
+                    logger.debug(f"Endpoint 404 (added to failed list): {endpoint}")
+                    continue
+                # For other errors, log but continue trying
+                logger.debug(f"Error with endpoint {endpoint}: {e}")
+                continue
+            except Exception as e:
+                logger.debug(f"Unexpected error with endpoint {endpoint}: {e}")
+                continue
+        
+        logger.debug(f"No working endpoints found for patterns: {endpoint_patterns}")
+        return successful_data
 
     async def search_containers(
         self,
@@ -169,7 +249,8 @@ class ContainerCatalogClient:
 
     async def discover_rhoai_containers(
         self, release_version: str, filter_names: Optional[List[str]] = None,
-        manual_containers: Optional[List[Dict[str, str]]] = None
+        manual_containers: Optional[List[Dict[str, str]]] = None,
+        hybrid_discovery: bool = True
     ) -> List[ContainerImage]:
         """Discover all RHOAI containers for a specific release.
 
@@ -177,16 +258,21 @@ class ContainerCatalogClient:
             release_version: RHOAI release version (e.g., "2.8.0")
             filter_names: Optional list of container names to filter by
             manual_containers: Optional list of manually specified containers
+            hybrid_discovery: Whether to combine manual + API discovery (default: True)
 
         Returns:
             List of container images for the release
         """
         logger.info(f"Discovering RHOAI containers for release {release_version}")
         
-        # If manual containers are provided, use them
+        all_containers = []
+        seen_digests = set()
+        manual_count = 0
+        api_count = 0
+        
+        # Phase 1: Process manual containers if provided
         if manual_containers:
-            logger.info(f"Using {len(manual_containers)} manually configured containers for release {release_version}")
-            all_containers = []
+            logger.info(f"Processing {len(manual_containers)} manually configured containers for release {release_version}")
             for container_spec in manual_containers:
                 try:
                     # Create ContainerImage from manual specification
@@ -211,53 +297,101 @@ class ContainerCatalogClient:
                         continue
                         
                     all_containers.append(container)
+                    seen_digests.add(container.digest)
+                    manual_count += 1
                     logger.debug(f"Added manual container: {container.registry_url}")
                     
                 except Exception as e:
                     logger.warning(f"Failed to process manual container spec: {e}")
                     
-            logger.info(f"Successfully loaded {len(all_containers)} containers from manual configuration")
+            logger.info(f"Successfully loaded {manual_count} containers from manual configuration")
             
-            if not all_containers:
-                raise ValueError(f"No containers found for release {release_version} in manual configuration")
-                
-            return all_containers
+            # If hybrid discovery is disabled, return only manual containers
+            if not hybrid_discovery:
+                if not all_containers:
+                    raise ValueError(f"No containers found for release {release_version} in manual configuration")
+                return all_containers
 
-        # Search patterns for RHOAI containers
-        # We'll search for these patterns without the version first, then check version match
+        # Phase 2: API Discovery - Enhanced search patterns for comprehensive coverage
+        logger.info(f"Starting API discovery for release {release_version} (hybrid_discovery={hybrid_discovery})")
+        
+        # Comprehensive search patterns covering all known RHOAI/OpenShift AI variations
         search_patterns = [
+            # Core product names
             "rhoai",
             "openshift-ai", 
-            "rhods",  # Legacy name
+            "openshift ai",
+            "rhods",  # Legacy Red Hat OpenShift Data Science
             "red hat openshift ai",
-            "openshift data science",  # Another possible name
+            "openshift data science",
+            
+            # Component-specific patterns
+            "odh",  # Open Data Hub components
+            "kubeflow",
+            "modelmesh",
+            "kserve",
+            "trustyai",
+            "codeflare",
+            "ray",
+            "notebook",
+            "workbench",
+            "pytorch",
+            "tensorflow",
+            "triton",
+            "openvino",
+            "habana",
+            "intel",
+            
+            # Operator patterns
+            "rhods-operator",
+            "data-science",
+            "ml-pipelines",
+            "pipelines",
+            
+            # Jupyter/notebook patterns
+            "jupyter",
+            "notebook-controller",
+            "workbench-images",
+            
+            # Additional infrastructure
+            "dashboard",
+            "oauth-proxy",
+            "rest-proxy"
         ]
-
-        all_containers = []
-        seen_digests = set()
+        
+        # Namespace patterns to search within
+        namespace_patterns = [
+            "rhoai",
+            "openshift-ai",
+            "rhods", 
+            "odh",
+            "redhat-ods"
+        ]
 
         for pattern in search_patterns:
             try:
                 page = 1
                 consecutive_empty_pages = 0
+                pattern_containers = 0
                 
                 while consecutive_empty_pages < 3:  # Stop after 3 consecutive empty result pages
                     result = await self.search_containers(
                         query=pattern,
                         page=page,
                         page_size=100,
-                        filter_params={"vendor": "redhat"},  # Remove architecture filter for now
+                        filter_params={"vendor": "redhat"},
                     )
 
                     # Count how many containers we found on this page
                     page_containers = 0
                     
-                    logger.debug(f"Page {page}: Found {len(result.images)} containers matching '{pattern}'")
+                    logger.debug(f"Pattern '{pattern}' Page {page}: Found {len(result.images)} containers")
                     
                     # Filter containers
                     for container in result.images:
-                        # Avoid duplicates
-                        if container.digest in seen_digests:
+                        # Avoid duplicates (check both digest and registry_url)
+                        container_key = f"{container.digest}-{container.registry_url}"
+                        if container.digest in seen_digests or container_key in seen_digests:
                             continue
 
                         # Apply name filter if specified
@@ -266,15 +400,17 @@ class ContainerCatalogClient:
                         ):
                             continue
 
-                        # Log what we're checking
-                        logger.debug(f"Checking container: {container.name} for release {release_version}")
-                        
-                        # Verify this is actually for the requested release
-                        if self._is_release_match(container, release_version):
-                            logger.info(f"Found matching container: {container.name}")
-                            all_containers.append(container)
-                            seen_digests.add(container.digest)
-                            page_containers += 1
+                        # Enhanced matching: check if container is RHOAI-related
+                        if self._is_rhoai_container(container, namespace_patterns):
+                            # Verify this is actually for the requested release
+                            if self._is_release_match(container, release_version):
+                                logger.info(f"Found API container: {container.name}")
+                                all_containers.append(container)
+                                seen_digests.add(container.digest)
+                                seen_digests.add(container_key)
+                                page_containers += 1
+                                pattern_containers += 1
+                                api_count += 1
 
                     # Track empty pages
                     if page_containers == 0:
@@ -289,17 +425,30 @@ class ContainerCatalogClient:
                     page += 1
                     
                     # Safety limit to prevent infinite loops
-                    if page > 100:
+                    # TODO: Make this configurable via Config
+                    if page > 100:  # This could be made configurable in the future
                         logger.warning(f"Reached page limit for pattern '{pattern}'")
                         break
+                        
+                logger.debug(f"Pattern '{pattern}' found {pattern_containers} new containers")
 
             except Exception as e:
                 logger.warning(f"Failed to search with pattern '{pattern}': {e}")
                 continue
 
-        logger.info(
-            f"Found {len(all_containers)} containers for release {release_version}"
-        )
+        # Summary logging
+        total_containers = len(all_containers)
+        logger.info(f"Discovery complete for release {release_version}:")
+        logger.info(f"  Manual containers: {manual_count}")
+        logger.info(f"  API discovered: {api_count}")
+        logger.info(f"  Total containers: {total_containers}")
+        
+        if total_containers == 0:
+            if manual_containers:
+                raise ValueError(f"No containers found for release {release_version} (manual config had {len(manual_containers)} entries but none matched filters)")
+            else:
+                raise ValueError(f"No containers found for release {release_version} via API discovery")
+                
         return all_containers
 
     async def get_container_vulnerabilities(self, container_id: str) -> Dict[str, Any]:
@@ -338,36 +487,22 @@ class ContainerCatalogClient:
             return None
             
         async with self._semaphore:
-            # Try different API endpoints
-            endpoints = [
-                f"images/by_id?image_id={image_id}",
-                f"images/{image_id}",
-                f"repositories/registry/access.redhat.com/rhoai/{image_id}"
+            # Define endpoint patterns to try
+            endpoint_patterns = [
+                "images/by_id?image_id={image_id}",
+                "images/{image_id}",
+                "repositories/registry/access.redhat.com/rhoai/{image_id}"
             ]
             
-            for endpoint in endpoints:
-                try:
-                    url = urljoin(self.base_url, endpoint)
-                    response = await self._make_request("GET", url)
-                    data = response.json()
-                    
-                    # Different endpoints may return data in different formats
-                    if "data" in data:
-                        return data.get("data", {}).get("image") or data.get("data")
-                    elif "_id" in data:
-                        return data
-                    elif "repository" in data:
-                        return data
-                        
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 404:
-                        continue  # Try next endpoint
-                    # For other errors, log but continue
-                    logger.debug(f"Error with endpoint {endpoint}: {e}")
-                    continue
+            # Use smart endpoint handling
+            result = await self._try_endpoints_smartly(endpoint_patterns, image_id=image_id)
             
-            logger.warning(f"Image not found with any endpoint: {image_id}")
-            return None
+            if result is None:
+                logger.warning(f"Image not found with any endpoint: {image_id}")
+            else:
+                logger.debug(f"Successfully retrieved image data for: {image_id}")
+                
+            return result
     
     async def get_rpm_manifest(self, image_id: str) -> Optional[Dict[str, Any]]:
         """Get RPM manifest for a container image.
@@ -384,35 +519,28 @@ class ContainerCatalogClient:
             return None
             
         async with self._semaphore:
-            # Try different API endpoints for RPM manifest
-            endpoints = [
-                f"images/rpm_manifest?image_id={image_id}",
-                f"images/{image_id}/rpm-manifest",
-                f"repositories/{image_id}/manifest"
+            # Define endpoint patterns to try
+            endpoint_patterns = [
+                "images/rpm_manifest?image_id={image_id}",
+                "images/{image_id}/rpm-manifest",
+                "repositories/{image_id}/manifest"
             ]
             
-            for endpoint in endpoints:
-                try:
-                    url = urljoin(self.base_url, endpoint)
-                    response = await self._make_request("GET", url)
-                    data = response.json()
-                    
-                    # Different endpoints may return data in different formats
-                    if "data" in data and "rpm_manifest" in data["data"]:
-                        return data["data"]["rpm_manifest"]
-                    elif "rpms" in data:
-                        return data
-                    elif "manifest" in data:
-                        return data["manifest"]
-                        
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 404:
-                        continue  # Try next endpoint
-                    logger.debug(f"Error with endpoint {endpoint}: {e}")
-                    continue
+            # Use smart endpoint handling
+            result = await self._try_endpoints_smartly(endpoint_patterns, image_id=image_id)
             
-            logger.debug(f"No RPM manifest found with any endpoint for: {image_id}")
-            return None
+            # Additional processing for RPM manifest specific formats
+            if result and "data" in result and "rpm_manifest" in result["data"]:
+                result = result["data"]["rpm_manifest"]
+            elif result and "manifest" in result:
+                result = result["manifest"]
+            
+            if result is None:
+                logger.debug(f"No RPM manifest found with any endpoint for: {image_id}")
+            else:
+                logger.debug(f"Successfully retrieved RPM manifest for: {image_id}")
+                
+            return result
     
     async def get_image_vulnerabilities(self, image_id: str) -> List[Dict[str, Any]]:
         """Get vulnerabilities for a specific image using GraphQL endpoint.
@@ -460,29 +588,41 @@ class ContainerCatalogClient:
         """
         last_exception = None
 
+        # Log request details in debug mode
+        request_headers = dict(self._client.headers)
+        request_headers.update(kwargs.get('headers', {}))
+        request_content = kwargs.get('content') or kwargs.get('data')
+        if request_content and hasattr(request_content, 'decode'):
+            request_content = request_content.decode('utf-8', errors='ignore')
+
         for attempt in range(self.max_retries + 1):
-            try:
-                response = await self._client.request(
-                    method, url, params=params, **kwargs
-                )
-                response.raise_for_status()
-                return response
-
-            except httpx.HTTPError as e:
-                last_exception = e
-
-                if attempt < self.max_retries:
-                    # Calculate backoff delay
-                    delay = 2**attempt + (attempt * 0.1)
-                    logger.debug(
-                        f"Request failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}"
+            # Don't suppress 404s for regular API calls, only for endpoint exploration
+            with debug_http_request(method, url, params, request_headers, request_content) as debug_ctx:
+                try:
+                    response = await self._client.request(
+                        method, url, params=params, **kwargs
                     )
-                    logger.debug(f"Retrying in {delay:.1f} seconds...")
-                    await asyncio.sleep(delay)
-                else:
-                    logger.debug(
-                        f"Request failed after {self.max_retries + 1} attempts: {e}"
-                    )
+                    response.raise_for_status()
+                    
+                    # Log successful response in debug mode
+                    debug_ctx.log_response(response)
+                    return response
+
+                except httpx.HTTPError as e:
+                    last_exception = e
+
+                    if attempt < self.max_retries:
+                        # Calculate backoff delay
+                        delay = 2**attempt + (attempt * 0.1)
+                        logger.debug(
+                            f"Request failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}"
+                        )
+                        logger.debug(f"Retrying in {delay:.1f} seconds...")
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.debug(
+                            f"Request failed after {self.max_retries + 1} attempts: {e}"
+                        )
 
         # Re-raise the last exception
         raise last_exception
@@ -617,6 +757,50 @@ class ContainerCatalogClient:
         
         # If we've passed all checks (query matched if provided, and all filters pass), return True
         return True
+
+    def _is_rhoai_container(
+        self, container: ContainerImage, namespace_patterns: List[str]
+    ) -> bool:
+        """Check if a container belongs to RHOAI/OpenShift AI.
+        
+        Args:
+            container: Container image to check
+            namespace_patterns: List of namespace patterns to match against
+            
+        Returns:
+            True if container is RHOAI-related
+        """
+        # Check registry URL for RHOAI namespaces
+        registry_url_lower = container.registry_url.lower()
+        for namespace in namespace_patterns:
+            if f"/{namespace}/" in registry_url_lower:
+                logger.debug(f"Container {container.name} matches namespace pattern: {namespace}")
+                return True
+        
+        # Check container name for RHOAI indicators
+        name_lower = container.name.lower()
+        rhoai_indicators = [
+            "rhoai", "rhods", "odh", "openshift-ai", "data-science",
+            "kubeflow", "modelmesh", "kserve", "trustyai", "codeflare",
+            "notebook", "workbench", "jupyter"
+        ]
+        
+        for indicator in rhoai_indicators:
+            if indicator in name_lower:
+                logger.debug(f"Container {container.name} matches name indicator: {indicator}")
+                return True
+        
+        # Check labels for RHOAI/OpenShift AI indicators
+        for label_key, label_value in container.labels.items():
+            label_key_lower = str(label_key).lower()
+            label_value_lower = str(label_value).lower()
+            
+            if any(indicator in label_key_lower or indicator in label_value_lower 
+                   for indicator in rhoai_indicators):
+                logger.debug(f"Container {container.name} matches label: {label_key}={label_value}")
+                return True
+        
+        return False
 
     def _is_release_match(
         self, container: ContainerImage, release_version: str

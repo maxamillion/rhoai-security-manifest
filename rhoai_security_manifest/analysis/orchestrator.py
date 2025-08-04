@@ -81,6 +81,7 @@ class SecurityAnalysisOrchestrator:
         catalog_client: ContainerCatalogClient,
         security_client: SecurityDataClient,
         grader: SecurityGrader,
+        config=None,
         database_session_factory=SessionLocal,
     ):
         """Initialize the orchestrator.
@@ -89,11 +90,13 @@ class SecurityAnalysisOrchestrator:
             catalog_client: Container catalog API client
             security_client: Security data API client
             grader: Security grading engine
+            config: Application configuration
             database_session_factory: Database session factory
         """
         self.catalog_client = catalog_client
         self.security_client = security_client
         self.grader = grader
+        self.config = config
         self.session_factory = database_session_factory
 
     async def analyze_release(
@@ -180,8 +183,12 @@ class SecurityAnalysisOrchestrator:
                     manual_containers = container_config['rhoai_containers'][release_version]
                     logger.info(f"Using manual container configuration for release {release_version}")
             
+            # Use configuration setting for hybrid discovery (fallback to True if no config)
+            hybrid_discovery = True
+            if self.config and hasattr(self.config, 'discovery'):
+                hybrid_discovery = self.config.discovery.hybrid_discovery
             containers = await self.catalog_client.discover_rhoai_containers(
-                release_version, container_filter, manual_containers
+                release_version, container_filter, manual_containers, hybrid_discovery
             )
             return containers
         except Exception as e:
@@ -582,5 +589,8 @@ async def create_orchestrator(config) -> SecurityAnalysisOrchestrator:
     grader = create_grader()
 
     return SecurityAnalysisOrchestrator(
-        catalog_client=catalog_client, security_client=security_client, grader=grader
+        catalog_client=catalog_client, 
+        security_client=security_client, 
+        grader=grader,
+        config=config
     )
