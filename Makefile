@@ -72,8 +72,16 @@ validate: ## Validate project setup
 	$(UV) run pytest --collect-only -q
 	@echo "Project validation complete!"
 
-run: ## Run the CLI tool for development
-	$(UV) run python -m $(PACKAGE_NAME).cli.main $(ARGS)
+run: ## Run the CLI tool for development (usage: 'make run [command]' or 'make run ARGS="command --flags"')
+	@if [ "$(word 2,$(MAKECMDGOALS))" != "" ]; then \
+		$(UV) run python -m $(PACKAGE_NAME).cli.main $(filter-out run,$(MAKECMDGOALS)); \
+	else \
+		$(UV) run python -m $(PACKAGE_NAME).cli.main $(ARGS); \
+	fi
+
+# Dummy targets for transparent argument passing
+status version cache compare generate interactive:
+	@:
 
 run-cli: ## Run the CLI tool (example)
 	$(UV) run python -m $(PACKAGE_NAME).cli.main --help
