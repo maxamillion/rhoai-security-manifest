@@ -9,7 +9,6 @@ from sqlalchemy import (
     TIMESTAMP,
     ForeignKey,
     Integer,
-    JSON,
     create_engine,
     func,
 )
@@ -37,9 +36,15 @@ class ProductListing(Base):
     product_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     product_id: Mapped[Optional[str]] = mapped_column(TEXT)
     vendor: Mapped[str] = mapped_column(TEXT, nullable=False, default="Red Hat")
-    deployment_methods: Mapped[Optional[str]] = mapped_column(TEXT)  # JSON serialized list
-    functional_categories: Mapped[Optional[str]] = mapped_column(TEXT)  # JSON serialized list
-    operator_bundles: Mapped[Optional[str]] = mapped_column(TEXT)  # JSON serialized operator bundle data
+    deployment_methods: Mapped[Optional[str]] = mapped_column(
+        TEXT
+    )  # JSON serialized list
+    functional_categories: Mapped[Optional[str]] = mapped_column(
+        TEXT
+    )  # JSON serialized list
+    operator_bundles: Mapped[Optional[str]] = mapped_column(
+        TEXT
+    )  # JSON serialized operator bundle data
     description: Mapped[Optional[str]] = mapped_column(TEXT)
     documentation_url: Mapped[Optional[str]] = mapped_column(TEXT)
     support_url: Mapped[Optional[str]] = mapped_column(TEXT)
@@ -96,12 +101,20 @@ class Container(Base):
         TIMESTAMP, nullable=False, default=func.now()
     )
     last_scanned: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP)
-    
+
     # Product Listings integration fields
-    source_method: Mapped[Optional[str]] = mapped_column(TEXT)  # "product_listings", "manual", "search"
-    operator_bundle_id: Mapped[Optional[str]] = mapped_column(TEXT)  # Reference to operator bundle
-    product_version: Mapped[Optional[str]] = mapped_column(TEXT)  # RHOAI version correlation
-    categories: Mapped[Optional[str]] = mapped_column(TEXT)  # JSON serialized list of categories
+    source_method: Mapped[Optional[str]] = mapped_column(
+        TEXT
+    )  # "product_listings", "manual", "search"
+    operator_bundle_id: Mapped[Optional[str]] = mapped_column(
+        TEXT
+    )  # Reference to operator bundle
+    product_version: Mapped[Optional[str]] = mapped_column(
+        TEXT
+    )  # RHOAI version correlation
+    categories: Mapped[Optional[str]] = mapped_column(
+        TEXT
+    )  # JSON serialized list of categories
 
     # Relationships
     release: Mapped["Release"] = relationship("Release", back_populates="containers")

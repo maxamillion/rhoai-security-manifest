@@ -209,7 +209,7 @@ class SecurityDataClient:
         """Search for CVEs matching criteria.
 
         Args:
-            query: Search query string
+            query: Search query string (single term recommended)
             after_date: Only return CVEs published after this date
             severity: Filter by severity level
             limit: Maximum number of results
@@ -217,10 +217,18 @@ class SecurityDataClient:
         Returns:
             List of matching CVEs
         """
+        # Validate query format to prevent common API errors
+        if not query or not query.strip():
+            logger.warning("Empty query provided to search_cves")
+            return []
+
+        # Clean query to remove problematic characters and patterns
+        cleaned_query = self._clean_search_query(query.strip())
+
         async with self._semaphore:
             url = urljoin(self.base_url, "security/cve")
 
-            params = {"q": query, "limit": min(limit, 1000)}
+            params = {"q": cleaned_query, "limit": min(limit, 1000)}
 
             if after_date:
                 params["after"] = after_date.isoformat()
@@ -228,19 +236,34 @@ class SecurityDataClient:
             if severity:
                 params["severity"] = severity.value
 
-            response = await self._make_request("GET", url, params=params)
-            data = response.json()
+            logger.debug(
+                f"Searching CVEs with query: '{cleaned_query}' (original: '{query}')"
+            )
 
-            cves = []
-            for item in data.get("data", []):
-                try:
-                    cve = self._parse_cve_data(item)
-                    cves.append(cve)
-                except Exception as e:
-                    logger.warning(f"Failed to parse CVE data: {e}")
-                    continue
+            try:
+                response = await self._make_request("GET", url, params=params)
+                data = response.json()
 
-            return cves
+                cves = []
+                for item in data.get("data", []):
+                    try:
+                        cve = self._parse_cve_data(item)
+                        cves.append(cve)
+                    except Exception as e:
+                        logger.warning(f"Failed to parse CVE data: {e}")
+                        continue
+
+                logger.debug(f"Found {len(cves)} CVEs for query: '{cleaned_query}'")
+                return cves
+
+            except Exception as e:
+                if "404" in str(e):
+                    logger.warning(
+                        f"No CVEs found for query '{cleaned_query}' (404 error) - this may indicate the query format is not supported by the API"
+                    )
+                else:
+                    logger.error(f"CVE search failed for query '{cleaned_query}': {e}")
+                return []
 
     async def get_package_vulnerabilities(
         self, package_name: str, package_version: str, package_release: str
@@ -436,23 +459,28 @@ class SecurityDataClient:
 
     async def _search_by_container_name(self, container_name: str) -> list[CVEData]:
         """Search for vulnerabilities by container name patterns."""
-        # Search for CVEs mentioning this container or related packages
-        search_terms = [
-            container_name,
-            f"openshift {container_name}",
-            f"rhoai {container_name}",
-        ]
+        # Search for CVEs using individual terms related to this container
+        search_terms = [container_name, "openshift-ai", "rhoai", "rhods"]
 
         all_cves = []
         for term in search_terms:
             try:
+                # Each term is searched individually
                 cves = await self.search_cves(term, limit=50)
-                all_cves.extend(cves)
+                if cves:
+                    all_cves.extend(cves)
+                    logger.debug(f"Found {len(cves)} CVEs for container term: '{term}'")
             except Exception as e:
-                logger.debug(f"Search failed for term '{term}': {e}")
+                logger.debug(f"Search failed for container term '{term}': {e}")
                 continue
 
-        return all_cves
+        # Remove duplicates
+        unique_cves = {}
+        for cve in all_cves:
+            if cve.cve_id not in unique_cves:
+                unique_cves[cve.cve_id] = cve
+
+        return list(unique_cves.values())
 
     async def _get_advisories_for_packages(
         self, package_names: list[str]
@@ -532,6 +560,41 @@ class SecurityDataClient:
                         )
 
         raise last_exception
+
+    def _clean_search_query(self, query: str) -> str:
+        """Clean and validate search query for the Red Hat Security Data API.
+
+        Args:
+            query: Raw search query string
+
+        Returns:
+            Cleaned query string suitable for the API
+        """
+        # Remove leading/trailing whitespace
+        cleaned = query.strip()
+
+        # If the query contains multiple space-separated terms, take only the first one
+        # This addresses the main issue where "rhods rhods-operator" was being sent
+        if " " in cleaned:
+            terms = cleaned.split()
+            cleaned = terms[0]  # Take first term only
+            logger.debug(
+                f"Multi-term query detected, using first term: '{cleaned}' (original: '{query}')"
+            )
+
+        # Remove potentially problematic characters for URL encoding
+        # Keep alphanumeric, hyphens, underscores, and dots
+        import re
+
+        cleaned = re.sub(r"[^a-zA-Z0-9\-_\.]", "", cleaned)
+
+        # Ensure query is not empty after cleaning
+        if not cleaned:
+            logger.warning(f"Query became empty after cleaning: '{query}'")
+            return "openshift-ai"  # Fallback to a valid search term
+
+        logger.debug(f"Cleaned query: '{cleaned}' (from original: '{query}')")
+        return cleaned
 
     def _parse_cve_data(self, data: dict[str, Any]) -> CVEData:
         """Parse CVE data from API response."""
@@ -633,8 +696,7 @@ class SecurityDataClient:
         )
 
     async def get_product_vulnerabilities(
-        self, 
-        query_params: list[dict[str, Any]]
+        self, query_params: list[dict[str, Any]]
     ) -> list[CVEData]:
         """Get vulnerabilities for a product using structured query parameters.
 
@@ -645,40 +707,54 @@ class SecurityDataClient:
             List of CVEs relevant to the product
         """
         all_vulnerabilities = []
-        
+        successful_queries = 0
+        failed_queries = 0
+
         logger.info(f"Executing {len(query_params)} product vulnerability queries")
-        
+
         for query in query_params:
             query_type = query.get("query_type", "unknown")
             terms = query.get("terms", [])
             priority = query.get("priority", "medium")
-            
-            logger.debug(f"Executing {query_type} query with {len(terms)} terms (priority: {priority})")
-            
-            # Execute searches for each term
+
+            logger.debug(
+                f"Executing {query_type} query with {len(terms)} terms (priority: {priority})"
+            )
+
+            # Execute searches for each term individually
             for term in terms:
                 try:
-                    cves = await self.search_cves(term, limit=50)
-                    all_vulnerabilities.extend(cves)
-                    logger.debug(f"Found {len(cves)} CVEs for term: {term}")
+                    # Each term should be a single search query
+                    if isinstance(term, str) and term.strip():
+                        cves = await self.search_cves(term.strip(), limit=50)
+                        if cves:
+                            all_vulnerabilities.extend(cves)
+                            successful_queries += 1
+                            logger.debug(f"Found {len(cves)} CVEs for term: '{term}'")
+                        else:
+                            logger.debug(f"No CVEs found for term: '{term}'")
+                    else:
+                        logger.warning(f"Invalid search term: {term}")
+                        failed_queries += 1
                 except Exception as e:
                     logger.warning(f"Failed to search CVEs for term '{term}': {e}")
+                    failed_queries += 1
                     continue
-        
+
         # Remove duplicates based on CVE ID
         unique_cves = {}
         for cve in all_vulnerabilities:
             if cve.cve_id not in unique_cves:
                 unique_cves[cve.cve_id] = cve
-        
+
         result = list(unique_cves.values())
-        logger.info(f"Found {len(result)} unique vulnerabilities for product")
+        logger.info(
+            f"Product vulnerability search complete: {len(result)} unique vulnerabilities found from {successful_queries} successful queries ({failed_queries} failed)"
+        )
         return result
 
     async def analyze_operator_bundle_security(
-        self, 
-        bundle_package: str,
-        containers: list[dict[str, Any]]
+        self, bundle_package: str, containers: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Analyze security for an operator bundle and its containers.
 
@@ -690,55 +766,62 @@ class SecurityDataClient:
             Security analysis results for the bundle
         """
         logger.info(f"Analyzing security for operator bundle: {bundle_package}")
-        
+
         analysis = {
             "bundle_package": bundle_package,
             "containers": len(containers),
             "vulnerabilities": [],
             "advisories": [],
             "risk_score": 0.0,
-            "analyzed_at": datetime.now()
+            "analyzed_at": datetime.now(),
         }
-        
+
         # Analyze each container in the bundle
         for container in containers:
             container_name = container.get("name", "")
-            
-            # Search for bundle-specific vulnerabilities
+
+            # Search for bundle-specific vulnerabilities using individual terms
             bundle_terms = [
-                f"{bundle_package}",
-                f"openshift {bundle_package}",
-                f"rhoai {bundle_package}",
-                f"operator {bundle_package}"
+                bundle_package,
+                "openshift-ai",
+                "rhoai",
+                "rhods",
+                "operator",
             ]
-            
+
             for term in bundle_terms:
                 try:
                     cves = await self.search_cves(term, limit=25)
-                    analysis["vulnerabilities"].extend(cves)
+                    if cves:
+                        analysis["vulnerabilities"].extend(cves)
+                        logger.debug(
+                            f"Found {len(cves)} CVEs for bundle term: '{term}'"
+                        )
                 except Exception as e:
                     logger.debug(f"Bundle security search failed for '{term}': {e}")
                     continue
-        
+
         # Remove duplicate CVEs
         unique_cves = {}
         for cve in analysis["vulnerabilities"]:
             if cve.cve_id not in unique_cves:
                 unique_cves[cve.cve_id] = cve
         analysis["vulnerabilities"] = list(unique_cves.values())
-        
+
         # Calculate risk score
-        analysis["risk_score"] = self._calculate_bundle_risk_score(analysis["vulnerabilities"])
-        
-        logger.info(f"Bundle security analysis complete: {len(analysis['vulnerabilities'])} vulnerabilities, "
-                   f"risk score: {analysis['risk_score']:.2f}")
-        
+        analysis["risk_score"] = self._calculate_bundle_risk_score(
+            analysis["vulnerabilities"]
+        )
+
+        logger.info(
+            f"Bundle security analysis complete: {len(analysis['vulnerabilities'])} vulnerabilities, "
+            f"risk score: {analysis['risk_score']:.2f}"
+        )
+
         return analysis
 
     async def correlate_product_cves(
-        self, 
-        cves: list[CVEData],
-        product_name: str = "Red Hat OpenShift AI"
+        self, cves: list[CVEData], product_name: str = "Red Hat OpenShift AI"
     ) -> dict[str, Any]:
         """Correlate CVEs to specific product components.
 
@@ -750,7 +833,7 @@ class SecurityDataClient:
             Correlation results mapping CVEs to product components
         """
         logger.info(f"Correlating {len(cves)} CVEs for product: {product_name}")
-        
+
         correlation = {
             "product_name": product_name,
             "total_cves": len(cves),
@@ -758,9 +841,9 @@ class SecurityDataClient:
             "severity_breakdown": {},
             "timeline_analysis": {},
             "correlation_confidence": {},
-            "correlated_at": datetime.now()
+            "correlated_at": datetime.now(),
         }
-        
+
         # Component mapping patterns
         component_patterns = {
             "operator": ["operator", "controller", "rhods-operator"],
@@ -769,13 +852,15 @@ class SecurityDataClient:
             "pipelines": ["pipeline", "kubeflow", "workflow"],
             "runtime": ["pytorch", "tensorflow", "triton", "openvino"],
             "infrastructure": ["dashboard", "proxy", "api-server"],
-            "ai_ml": ["trustyai", "ai", "ml", "machine-learning"]
+            "ai_ml": ["trustyai", "ai", "ml", "machine-learning"],
         }
-        
+
         # Analyze each CVE
         for cve in cves:
-            cve_text = f"{cve.description} {cve.package_name or ''} {cve.cve_id}".lower()
-            
+            cve_text = (
+                f"{cve.description} {cve.package_name or ''} {cve.cve_id}".lower()
+            )
+
             # Map CVE to components
             mapped_components = []
             for component, patterns in component_patterns.items():
@@ -783,29 +868,39 @@ class SecurityDataClient:
                     if pattern in cve_text:
                         mapped_components.append(component)
                         break
-            
+
             # Store component mappings
             for component in mapped_components:
                 if component not in correlation["component_mappings"]:
                     correlation["component_mappings"][component] = []
-                correlation["component_mappings"][component].append({
-                    "cve_id": cve.cve_id,
-                    "severity": cve.severity.value,
-                    "cvss_score": cve.cvss_score,
-                    "confidence": "high" if len(mapped_components) == 1 else "medium"
-                })
-        
+                correlation["component_mappings"][component].append(
+                    {
+                        "cve_id": cve.cve_id,
+                        "severity": cve.severity.value,
+                        "cvss_score": cve.cvss_score,
+                        "confidence": (
+                            "high" if len(mapped_components) == 1 else "medium"
+                        ),
+                    }
+                )
+
         # Severity breakdown
         for cve in cves:
             severity = cve.severity.value
-            correlation["severity_breakdown"][severity] = correlation["severity_breakdown"].get(severity, 0) + 1
-        
+            correlation["severity_breakdown"][severity] = (
+                correlation["severity_breakdown"].get(severity, 0) + 1
+            )
+
         # Timeline analysis (group by year)
         for cve in cves:
             year = cve.published_date.year
-            correlation["timeline_analysis"][year] = correlation["timeline_analysis"].get(year, 0) + 1
-        
-        logger.info(f"CVE correlation complete: {len(correlation['component_mappings'])} components mapped")
+            correlation["timeline_analysis"][year] = (
+                correlation["timeline_analysis"].get(year, 0) + 1
+            )
+
+        logger.info(
+            f"CVE correlation complete: {len(correlation['component_mappings'])} components mapped"
+        )
         return correlation
 
     def _calculate_bundle_risk_score(self, vulnerabilities: list[CVEData]) -> float:
@@ -819,7 +914,7 @@ class SecurityDataClient:
         """
         if not vulnerabilities:
             return 0.0
-        
+
         score = 0.0
         for vuln in vulnerabilities:
             # Weight by severity
@@ -831,11 +926,11 @@ class SecurityDataClient:
                 score += 8.0
             elif vuln.severity.value == "Low":
                 score += 2.0
-            
+
             # Additional weight for CVSS score
             if vuln.cvss_score:
                 score += vuln.cvss_score * 2
-        
+
         # Normalize to 0-100 scale
         return min(score, 100.0)
 

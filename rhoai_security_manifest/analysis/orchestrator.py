@@ -7,8 +7,8 @@ from typing import Any, Optional
 import yaml
 
 from ..api.container_catalog import ContainerCatalogClient, ContainerImage
-from ..api.security_data import ContainerSecurityInfo, SecurityDataClient
 from ..api.product_listings import ProductListingsClient
+from ..api.security_data import ContainerSecurityInfo, SecurityDataClient
 from ..api.security_data_mapper import SecurityDataMapper
 from ..database.models import SessionLocal
 from ..database.repository import (
@@ -205,15 +205,19 @@ class SecurityAnalysisOrchestrator:
             hybrid_discovery = True
             use_product_listings = True
             if self.config and hasattr(self.config, "discovery"):
-                hybrid_discovery = getattr(self.config.discovery, "hybrid_discovery", True)
-                use_product_listings = getattr(self.config.discovery, "use_product_listings", True)
-            
+                hybrid_discovery = getattr(
+                    self.config.discovery, "hybrid_discovery", True
+                )
+                use_product_listings = getattr(
+                    self.config.discovery, "use_product_listings", True
+                )
+
             containers = await self.catalog_client.discover_rhoai_containers(
-                release_version, 
-                container_filter, 
-                manual_containers, 
+                release_version,
+                container_filter,
+                manual_containers,
                 hybrid_discovery,
-                use_product_listings
+                use_product_listings,
             )
             return containers
         except Exception as e:
@@ -587,7 +591,7 @@ class SecurityAnalysisOrchestrator:
         self,
         containers: list[ContainerImage],
         security_analyses: list[ContainerSecurityInfo],
-        release_version: str
+        release_version: str,
     ) -> dict[str, Any]:
         """Enhance security analysis with Product Listings data correlation.
 
@@ -603,18 +607,22 @@ class SecurityAnalysisOrchestrator:
             "product_correlation": {},
             "operator_bundle_analysis": {},
             "security_mapping": {},
-            "enhanced": False
+            "enhanced": False,
         }
 
         if not self.product_listings_client or not self.security_data_mapper:
-            logger.debug("Product Listings client or mapper not available for enhancement")
+            logger.debug(
+                "Product Listings client or mapper not available for enhancement"
+            )
             return enhancement
 
         try:
             logger.info("Enhancing security analysis with Product Listings data")
 
             # Get product listing for OpenShift AI
-            product_listing = await self.product_listings_client.get_openshift_ai_product()
+            product_listing = (
+                await self.product_listings_client.get_openshift_ai_product()
+            )
             if not product_listing:
                 logger.warning("No Product Listings data available for enhancement")
                 return enhancement
@@ -625,20 +633,24 @@ class SecurityAnalysisOrchestrator:
                 all_vulnerabilities.extend(analysis.vulnerabilities)
 
             # Generate product-specific security queries
-            security_queries = self.security_data_mapper.map_product_to_security_queries(
-                product_listing, release_version
+            security_queries = (
+                self.security_data_mapper.map_product_to_security_queries(
+                    product_listing, release_version
+                )
             )
 
             # Get product-specific vulnerabilities
-            product_vulnerabilities = await self.security_client.get_product_vulnerabilities(
-                security_queries
+            product_vulnerabilities = (
+                await self.security_client.get_product_vulnerabilities(security_queries)
             )
 
             # Correlate vulnerabilities to product components
-            correlation = self.security_data_mapper.correlate_vulnerabilities_to_product(
-                product_vulnerabilities + all_vulnerabilities,
-                product_listing,
-                containers
+            correlation = (
+                self.security_data_mapper.correlate_vulnerabilities_to_product(
+                    product_vulnerabilities + all_vulnerabilities,
+                    product_listing,
+                    containers,
+                )
             )
 
             # Analyze operator bundles
@@ -652,10 +664,14 @@ class SecurityAnalysisOrchestrator:
                 ]
 
                 if bundle_containers:
-                    bundle_analysis = await self.security_client.analyze_operator_bundle_security(
-                        bundle.package, bundle_containers
+                    bundle_analysis = (
+                        await self.security_client.analyze_operator_bundle_security(
+                            bundle.package, bundle_containers
+                        )
                     )
-                    bundle_analyses[f"{bundle.package}-{bundle.ocp_version}"] = bundle_analysis
+                    bundle_analyses[f"{bundle.package}-{bundle.ocp_version}"] = (
+                        bundle_analysis
+                    )
 
             # Build enhancement data
             enhancement = {
@@ -664,24 +680,36 @@ class SecurityAnalysisOrchestrator:
                 "security_mapping": {
                     "total_product_queries": len(security_queries),
                     "product_vulnerabilities": len(product_vulnerabilities),
-                    "correlation_confidence": "high" if len(product_vulnerabilities) > 0 else "low",
-                    "enhanced_containers": len([c for c in containers if c.labels.get("source") == "product_listings"])
+                    "correlation_confidence": (
+                        "high" if len(product_vulnerabilities) > 0 else "low"
+                    ),
+                    "enhanced_containers": len(
+                        [
+                            c
+                            for c in containers
+                            if c.labels.get("source") == "product_listings"
+                        ]
+                    ),
                 },
                 "product_listing_metadata": {
                     "product_name": product_listing.product_name,
                     "operator_bundles": len(product_listing.operator_bundles),
                     "deployment_methods": product_listing.deployment_methods,
-                    "functional_categories": product_listing.functional_categories
+                    "functional_categories": product_listing.functional_categories,
                 },
-                "enhanced": True
+                "enhanced": True,
             }
 
-            logger.info(f"Security analysis enhancement complete: "
-                       f"{len(product_vulnerabilities)} product vulnerabilities, "
-                       f"{len(bundle_analyses)} operator bundles analyzed")
+            logger.info(
+                f"Security analysis enhancement complete: "
+                f"{len(product_vulnerabilities)} product vulnerabilities, "
+                f"{len(bundle_analyses)} operator bundles analyzed"
+            )
 
         except Exception as e:
-            logger.warning(f"Failed to enhance security analysis with product data: {e}")
+            logger.warning(
+                f"Failed to enhance security analysis with product data: {e}"
+            )
             enhancement["error"] = str(e)
 
         return enhancement
@@ -738,20 +766,28 @@ class SecurityAnalysisOrchestrator:
             "containers_discovered": len(containers),
             "containers_analyzed": len(security_analyses),
         }
-        
+
         # Add product enhancement data if available
         if product_enhancement and product_enhancement.get("enhanced"):
             metadata["product_listings_integration"] = {
                 "enabled": True,
                 "security_mapping": product_enhancement.get("security_mapping", {}),
-                "product_metadata": product_enhancement.get("product_listing_metadata", {}),
-                "operator_bundles_analyzed": len(product_enhancement.get("operator_bundle_analysis", {})),
-                "correlation_available": bool(product_enhancement.get("product_correlation", {}))
+                "product_metadata": product_enhancement.get(
+                    "product_listing_metadata", {}
+                ),
+                "operator_bundles_analyzed": len(
+                    product_enhancement.get("operator_bundle_analysis", {})
+                ),
+                "correlation_available": bool(
+                    product_enhancement.get("product_correlation", {})
+                ),
             }
         else:
             metadata["product_listings_integration"] = {
                 "enabled": False,
-                "reason": product_enhancement.get("error", "Product Listings client not available")
+                "reason": product_enhancement.get(
+                    "error", "Product Listings client not available"
+                ),
             }
 
         return AnalysisResult(
@@ -792,15 +828,17 @@ async def create_orchestrator(config) -> SecurityAnalysisOrchestrator:
         Configured orchestrator instance
     """
     from ..api.container_catalog import create_catalog_client
-    from ..api.security_data import create_security_client
     from ..api.product_listings import create_product_listings_client
+    from ..api.security_data import create_security_client
     from ..api.security_data_mapper import SecurityDataMapper
     from .grading import create_grader
 
     # Create Product Listings client (optional)
     product_listings_client = None
     try:
-        if getattr(config, 'discovery', None) and getattr(config.discovery, 'use_product_listings', True):
+        if getattr(config, "discovery", None) and getattr(
+            config.discovery, "use_product_listings", True
+        ):
             product_listings_client = await create_product_listings_client(config)
             logger.info("Product Listings API client enabled")
         else:

@@ -93,10 +93,14 @@ class DiscoveryConfig(BaseModel):
         default=True, description="Enable Product Listings API for container discovery"
     )
     product_listings_cache_ttl: int = Field(
-        default=3600, ge=300, le=86400, description="Product Listings cache TTL in seconds"
+        default=3600,
+        ge=300,
+        le=86400,
+        description="Product Listings cache TTL in seconds",
     )
     fallback_to_manual_config: bool = Field(
-        default=True, description="Fallback to manual configuration if Product Listings API fails"
+        default=True,
+        description="Fallback to manual configuration if Product Listings API fails",
     )
     max_search_pages: int = Field(
         default=100, ge=10, le=500, description="Maximum API search pages per pattern"
@@ -287,8 +291,14 @@ class ConfigManager:
             "RHOAI_HYBRID_DISCOVERY": ["discovery", "hybrid_discovery"],
             "RHOAI_API_DISCOVERY_ENABLED": ["discovery", "api_discovery_enabled"],
             "RHOAI_USE_PRODUCT_LISTINGS": ["discovery", "use_product_listings"],
-            "RHOAI_PRODUCT_LISTINGS_CACHE_TTL": ["discovery", "product_listings_cache_ttl"],
-            "RHOAI_FALLBACK_TO_MANUAL_CONFIG": ["discovery", "fallback_to_manual_config"],
+            "RHOAI_PRODUCT_LISTINGS_CACHE_TTL": [
+                "discovery",
+                "product_listings_cache_ttl",
+            ],
+            "RHOAI_FALLBACK_TO_MANUAL_CONFIG": [
+                "discovery",
+                "fallback_to_manual_config",
+            ],
             "RHOAI_MAX_SEARCH_PAGES": ["discovery", "max_search_pages"],
             # Logging settings
             "RHOAI_LOG_LEVEL": ["logging", "level"],

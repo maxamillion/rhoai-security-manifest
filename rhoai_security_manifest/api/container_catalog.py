@@ -305,22 +305,29 @@ class ContainerCatalogClient:
         if use_product_listings and self._product_listings_client:
             try:
                 logger.info("Attempting container discovery via Product Listings API")
-                product_listing = await self._product_listings_client.get_openshift_ai_product()
-                
+                product_listing = (
+                    await self._product_listings_client.get_openshift_ai_product()
+                )
+
                 if product_listing:
-                    container_repos = await self._product_listings_client.map_version_to_containers(
-                        product_listing, release_version
+                    container_repos = (
+                        await self._product_listings_client.map_version_to_containers(
+                            product_listing, release_version
+                        )
                     )
-                    
+
                     # Convert ProductListing containers to ContainerImage objects
                     for repo in container_repos:
                         # Apply name filter if specified
                         if filter_names and not any(
-                            name.lower() in repo.repository.lower() for name in filter_names
+                            name.lower() in repo.repository.lower()
+                            for name in filter_names
                         ):
-                            logger.debug(f"Skipping container {repo.repository} - doesn't match filter")
+                            logger.debug(
+                                f"Skipping container {repo.repository} - doesn't match filter"
+                            )
                             continue
-                        
+
                         container = ContainerImage(
                             name=repo.repository,
                             registry_url=f"{repo.registry}/{repo.namespace}/{repo.repository}",
@@ -333,24 +340,32 @@ class ContainerCatalogClient:
                                 "bundle": repo.source_bundle or "",
                                 "ocp_versions": ",".join(repo.ocp_versions),
                                 "categories": ",".join(repo.categories),
-                            }
+                            },
                         )
-                        
+
                         all_containers.append(container)
                         seen_digests.add(container.digest)
                         product_listings_count += 1
-                        logger.debug(f"Added Product Listings container: {container.registry_url}")
-                    
-                    logger.info(f"Successfully discovered {product_listings_count} containers via Product Listings API")
-                    
+                        logger.debug(
+                            f"Added Product Listings container: {container.registry_url}"
+                        )
+
+                    logger.info(
+                        f"Successfully discovered {product_listings_count} containers via Product Listings API"
+                    )
+
                     # If we found containers via Product Listings and hybrid discovery is disabled,
                     # return only these containers
                     if product_listings_count > 0 and not hybrid_discovery:
-                        logger.info(f"Product Listings discovery complete (hybrid disabled): {product_listings_count} containers")
+                        logger.info(
+                            f"Product Listings discovery complete (hybrid disabled): {product_listings_count} containers"
+                        )
                         return all_containers
                 else:
-                    logger.warning("No OpenShift AI product found in Product Listings API")
-                    
+                    logger.warning(
+                        "No OpenShift AI product found in Product Listings API"
+                    )
+
             except Exception as e:
                 logger.warning(f"Product Listings API discovery failed: {e}")
                 logger.info("Falling back to manual/search discovery methods")
@@ -989,7 +1004,9 @@ class ContainerCatalogClient:
         return False
 
 
-async def create_catalog_client(config, product_listings_client: Optional[ProductListingsClient] = None) -> ContainerCatalogClient:
+async def create_catalog_client(
+    config, product_listings_client: Optional[ProductListingsClient] = None
+) -> ContainerCatalogClient:
     """Create and configure a container catalog client.
 
     Args:

@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 import httpx
 import yaml
@@ -20,7 +20,7 @@ class ContainerValidator:
 
     def __init__(self, timeout: int = 30):
         """Initialize the validator.
-        
+
         Args:
             timeout: Request timeout in seconds
         """
@@ -43,10 +43,10 @@ class ContainerValidator:
         self, config_path: Optional[Path] = None
     ) -> Dict[str, Any]:
         """Validate container configuration file.
-        
+
         Args:
             config_path: Path to containers.yaml file
-            
+
         Returns:
             Validation results with statistics and findings
         """
@@ -168,11 +168,11 @@ class ContainerValidator:
         self, containers: List[Dict[str, str]], max_concurrent: int = 5
     ) -> Dict[str, Any]:
         """Check if containers are accessible in the registry.
-        
+
         Args:
             containers: List of container specifications
             max_concurrent: Maximum concurrent requests
-            
+
         Returns:
             Accessibility check results
         """
@@ -191,12 +191,18 @@ class ContainerValidator:
                 repository = container.get("repository", "")
                 registry = container.get("registry", "registry.redhat.io")
 
-                container_url = f"https://{registry}/v2/{namespace}/{repository}/manifests/latest"
+                container_url = (
+                    f"https://{registry}/v2/{namespace}/{repository}/manifests/latest"
+                )
 
                 try:
                     response = await self._client.head(container_url)
-                    accessible = response.status_code in [200, 401, 403]  # 401/403 means exists but requires auth
-                    
+                    accessible = response.status_code in [
+                        200,
+                        401,
+                        403,
+                    ]  # 401/403 means exists but requires auth
+
                     return {
                         "container": f"{namespace}/{repository}",
                         "registry": registry,
@@ -220,11 +226,9 @@ class ContainerValidator:
         for result in check_results:
             if isinstance(result, Exception):
                 results["errors"] += 1
-                results["details"].append({
-                    "container": "unknown",
-                    "accessible": False,
-                    "error": str(result)
-                })
+                results["details"].append(
+                    {"container": "unknown", "accessible": False, "error": str(result)}
+                )
             else:
                 results["details"].append(result)
                 if result["accessible"]:
@@ -236,13 +240,15 @@ class ContainerValidator:
 
     def print_validation_report(self, validation_result: Dict[str, Any]) -> None:
         """Print a formatted validation report."""
-        console.print("\n🔍 [bold blue]Container Configuration Validation Report[/bold blue]\n")
+        console.print(
+            "\n🔍 [bold blue]Container Configuration Validation Report[/bold blue]\n"
+        )
 
         if not validation_result["success"]:
-            console.print(f"❌ [red]Validation Failed[/red]")
+            console.print("❌ [red]Validation Failed[/red]")
             if "error" in validation_result:
                 console.print(f"   Error: {validation_result['error']}")
-            
+
             if validation_result.get("issues"):
                 console.print("\n📋 [yellow]Issues Found:[/yellow]")
                 for issue in validation_result["issues"]:
@@ -262,7 +268,9 @@ class ContainerValidator:
         table.add_row("Unique Containers", str(stats.get("unique_containers", 0)))
 
         if stats.get("duplicate_containers", 0) > 0:
-            table.add_row("Duplicates", str(stats["duplicate_containers"]), style="yellow")
+            table.add_row(
+                "Duplicates", str(stats["duplicate_containers"]), style="yellow"
+            )
 
         console.print(table)
 
@@ -276,12 +284,14 @@ class ContainerValidator:
             release_table.add_column("Issues", style="red")
 
             for release, release_stats in stats["releases"].items():
-                issues = release_stats.get("duplicates", 0) + release_stats.get("missing_fields", 0)
+                issues = release_stats.get("duplicates", 0) + release_stats.get(
+                    "missing_fields", 0
+                )
                 release_table.add_row(
                     release,
                     str(release_stats.get("container_count", 0)),
                     str(release_stats.get("unique_containers", 0)),
-                    str(issues) if issues > 0 else "None"
+                    str(issues) if issues > 0 else "None",
                 )
 
             console.print(release_table)
@@ -305,21 +315,21 @@ class ContainerValidator:
         if total > 0:
             table.add_row("Total Checked", str(total), "100%")
             table.add_row(
-                "Accessible", 
-                str(stats["accessible"]), 
-                f"{(stats['accessible'] / total * 100):.1f}%"
+                "Accessible",
+                str(stats["accessible"]),
+                f"{(stats['accessible'] / total * 100):.1f}%",
             )
             table.add_row(
-                "Inaccessible", 
-                str(stats["inaccessible"]), 
-                f"{(stats['inaccessible'] / total * 100):.1f}%"
+                "Inaccessible",
+                str(stats["inaccessible"]),
+                f"{(stats['inaccessible'] / total * 100):.1f}%",
             )
             if stats["errors"] > 0:
                 table.add_row(
-                    "Errors", 
-                    str(stats["errors"]), 
-                    f"{(stats['errors'] / total * 100):.1f}%", 
-                    style="red"
+                    "Errors",
+                    str(stats["errors"]),
+                    f"{(stats['errors'] / total * 100):.1f}%",
+                    style="red",
                 )
 
         console.print(table)
@@ -327,34 +337,38 @@ class ContainerValidator:
         # Show inaccessible containers
         inaccessible = [d for d in stats["details"] if not d["accessible"]]
         if inaccessible:
-            console.print(f"\n❌ [red]Inaccessible Containers ({len(inaccessible)}):[/red]")
+            console.print(
+                f"\n❌ [red]Inaccessible Containers ({len(inaccessible)}):[/red]"
+            )
             for detail in inaccessible[:10]:  # Show first 10
-                error_info = f" ({detail['error']})" if detail.get('error') else ""
-                console.print(f"   • {detail['container']} - Status: {detail.get('status_code', 'Error')}{error_info}")
-            
+                error_info = f" ({detail['error']})" if detail.get("error") else ""
+                console.print(
+                    f"   • {detail['container']} - Status: {detail.get('status_code', 'Error')}{error_info}"
+                )
+
             if len(inaccessible) > 10:
                 console.print(f"   ... and {len(inaccessible) - 10} more")
 
 
 async def validate_rhoai_containers(
-    config_path: Optional[Path] = None, 
+    config_path: Optional[Path] = None,
     check_accessibility: bool = False,
-    release_filter: Optional[str] = None
+    release_filter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Main validation function for RHOAI containers.
-    
+
     Args:
         config_path: Path to containers.yaml file
         check_accessibility: Whether to check container accessibility
         release_filter: Only validate specific release
-        
+
     Returns:
         Complete validation results
     """
     async with ContainerValidator() as validator:
         # Validate configuration structure
         config_result = await validator.validate_container_config(config_path)
-        
+
         if not config_result["success"]:
             return {
                 "config_validation": config_result,
@@ -366,16 +380,16 @@ async def validate_rhoai_containers(
         if check_accessibility:
             if config_path is None:
                 config_path = Path("config/containers.yaml")
-            
+
             with open(config_path) as f:
                 config = yaml.safe_load(f)
-            
+
             containers_to_check = []
             for release, containers in config.get("rhoai_containers", {}).items():
                 if release_filter and release != release_filter:
                     continue
                 containers_to_check.extend(containers)
-            
+
             if containers_to_check:
                 accessibility_result = await validator.check_container_accessibility(
                     containers_to_check
