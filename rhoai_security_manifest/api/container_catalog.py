@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..utils.http_debug import debug_http_request
 from ..utils.logging import get_logger
+from .product_listings import ProductListingsClient
 
 logger = get_logger("api.container_catalog")
 
@@ -46,6 +47,7 @@ class ContainerCatalogClient:
         timeout: int = 30,
         max_retries: int = 3,
         max_concurrent: int = 10,
+        product_listings_client: Optional[ProductListingsClient] = None,
     ):
         """Initialize the catalog client.
 
@@ -54,12 +56,14 @@ class ContainerCatalogClient:
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
             max_concurrent: Maximum concurrent requests
+            product_listings_client: Optional product listings client for API-based discovery
         """
         self.base_url = base_url.rstrip("/") + "/"
         self.timeout = timeout
         self.max_retries = max_retries
         self.max_concurrent = max_concurrent
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._product_listings_client = product_listings_client
 
         # Track failed endpoints to avoid repeated 404s
         self._failed_endpoints = set()
@@ -275,6 +279,7 @@ class ContainerCatalogClient:
         filter_names: Optional[list[str]] = None,
         manual_containers: Optional[list[dict[str, str]]] = None,
         hybrid_discovery: bool = True,
+        use_product_listings: bool = True,
     ) -> list[ContainerImage]:
         """Discover all RHOAI containers for a specific release.
 
@@ -283,6 +288,7 @@ class ContainerCatalogClient:
             filter_names: Optional list of container names to filter by
             manual_containers: Optional list of manually specified containers
             hybrid_discovery: Whether to combine manual + API discovery (default: True)
+            use_product_listings: Whether to use Product Listings API for discovery (default: True)
 
         Returns:
             List of container images for the release
@@ -293,6 +299,65 @@ class ContainerCatalogClient:
         seen_digests = set()
         manual_count = 0
         api_count = 0
+        product_listings_count = 0
+
+        # Phase 0: Product Listings API Discovery (if enabled and client available)
+        if use_product_listings and self._product_listings_client:
+            try:
+                logger.info("Attempting container discovery via Product Listings API")
+                product_listing = await self._product_listings_client.get_openshift_ai_product()
+                
+                if product_listing:
+                    container_repos = await self._product_listings_client.map_version_to_containers(
+                        product_listing, release_version
+                    )
+                    
+                    # Convert ProductListing containers to ContainerImage objects
+                    for repo in container_repos:
+                        # Apply name filter if specified
+                        if filter_names and not any(
+                            name.lower() in repo.repository.lower() for name in filter_names
+                        ):
+                            logger.debug(f"Skipping container {repo.repository} - doesn't match filter")
+                            continue
+                        
+                        container = ContainerImage(
+                            name=repo.repository,
+                            registry_url=f"{repo.registry}/{repo.namespace}/{repo.repository}",
+                            digest=f"product-listings-{repo.namespace}-{repo.repository}",
+                            tag=release_version,
+                            created_at=datetime.now(),
+                            architecture="x86_64",
+                            labels={
+                                "source": "product_listings",
+                                "bundle": repo.source_bundle or "",
+                                "ocp_versions": ",".join(repo.ocp_versions),
+                                "categories": ",".join(repo.categories),
+                            }
+                        )
+                        
+                        all_containers.append(container)
+                        seen_digests.add(container.digest)
+                        product_listings_count += 1
+                        logger.debug(f"Added Product Listings container: {container.registry_url}")
+                    
+                    logger.info(f"Successfully discovered {product_listings_count} containers via Product Listings API")
+                    
+                    # If we found containers via Product Listings and hybrid discovery is disabled,
+                    # return only these containers
+                    if product_listings_count > 0 and not hybrid_discovery:
+                        logger.info(f"Product Listings discovery complete (hybrid disabled): {product_listings_count} containers")
+                        return all_containers
+                else:
+                    logger.warning("No OpenShift AI product found in Product Listings API")
+                    
+            except Exception as e:
+                logger.warning(f"Product Listings API discovery failed: {e}")
+                logger.info("Falling back to manual/search discovery methods")
+        elif use_product_listings and not self._product_listings_client:
+            logger.warning("Product Listings API requested but no client provided")
+        else:
+            logger.debug("Product Listings API discovery disabled")
 
         # Phase 1: Process manual containers if provided
         if manual_containers:
@@ -473,8 +538,9 @@ class ContainerCatalogClient:
         # Summary logging
         total_containers = len(all_containers)
         logger.info(f"Discovery complete for release {release_version}:")
+        logger.info(f"  Product Listings API: {product_listings_count}")
         logger.info(f"  Manual containers: {manual_count}")
-        logger.info(f"  API discovered: {api_count}")
+        logger.info(f"  Search API discovered: {api_count}")
         logger.info(f"  Total containers: {total_containers}")
 
         if total_containers == 0:
@@ -923,11 +989,12 @@ class ContainerCatalogClient:
         return False
 
 
-async def create_catalog_client(config) -> ContainerCatalogClient:
+async def create_catalog_client(config, product_listings_client: Optional[ProductListingsClient] = None) -> ContainerCatalogClient:
     """Create and configure a container catalog client.
 
     Args:
         config: Application configuration
+        product_listings_client: Optional product listings client for enhanced discovery
 
     Returns:
         Configured catalog client
@@ -936,4 +1003,5 @@ async def create_catalog_client(config) -> ContainerCatalogClient:
         timeout=config.api.timeout,
         max_retries=config.api.max_retries,
         max_concurrent=config.api.max_concurrent_requests,
+        product_listings_client=product_listings_client,
     )

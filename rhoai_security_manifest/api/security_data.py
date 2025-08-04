@@ -632,6 +632,213 @@ class SecurityDataClient:
             references=data.get("references", []),
         )
 
+    async def get_product_vulnerabilities(
+        self, 
+        query_params: list[dict[str, Any]]
+    ) -> list[CVEData]:
+        """Get vulnerabilities for a product using structured query parameters.
+
+        Args:
+            query_params: List of structured query parameters from SecurityDataMapper
+
+        Returns:
+            List of CVEs relevant to the product
+        """
+        all_vulnerabilities = []
+        
+        logger.info(f"Executing {len(query_params)} product vulnerability queries")
+        
+        for query in query_params:
+            query_type = query.get("query_type", "unknown")
+            terms = query.get("terms", [])
+            priority = query.get("priority", "medium")
+            
+            logger.debug(f"Executing {query_type} query with {len(terms)} terms (priority: {priority})")
+            
+            # Execute searches for each term
+            for term in terms:
+                try:
+                    cves = await self.search_cves(term, limit=50)
+                    all_vulnerabilities.extend(cves)
+                    logger.debug(f"Found {len(cves)} CVEs for term: {term}")
+                except Exception as e:
+                    logger.warning(f"Failed to search CVEs for term '{term}': {e}")
+                    continue
+        
+        # Remove duplicates based on CVE ID
+        unique_cves = {}
+        for cve in all_vulnerabilities:
+            if cve.cve_id not in unique_cves:
+                unique_cves[cve.cve_id] = cve
+        
+        result = list(unique_cves.values())
+        logger.info(f"Found {len(result)} unique vulnerabilities for product")
+        return result
+
+    async def analyze_operator_bundle_security(
+        self, 
+        bundle_package: str,
+        containers: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Analyze security for an operator bundle and its containers.
+
+        Args:
+            bundle_package: Operator bundle package name
+            containers: List of containers in the bundle
+
+        Returns:
+            Security analysis results for the bundle
+        """
+        logger.info(f"Analyzing security for operator bundle: {bundle_package}")
+        
+        analysis = {
+            "bundle_package": bundle_package,
+            "containers": len(containers),
+            "vulnerabilities": [],
+            "advisories": [],
+            "risk_score": 0.0,
+            "analyzed_at": datetime.now()
+        }
+        
+        # Analyze each container in the bundle
+        for container in containers:
+            container_name = container.get("name", "")
+            
+            # Search for bundle-specific vulnerabilities
+            bundle_terms = [
+                f"{bundle_package}",
+                f"openshift {bundle_package}",
+                f"rhoai {bundle_package}",
+                f"operator {bundle_package}"
+            ]
+            
+            for term in bundle_terms:
+                try:
+                    cves = await self.search_cves(term, limit=25)
+                    analysis["vulnerabilities"].extend(cves)
+                except Exception as e:
+                    logger.debug(f"Bundle security search failed for '{term}': {e}")
+                    continue
+        
+        # Remove duplicate CVEs
+        unique_cves = {}
+        for cve in analysis["vulnerabilities"]:
+            if cve.cve_id not in unique_cves:
+                unique_cves[cve.cve_id] = cve
+        analysis["vulnerabilities"] = list(unique_cves.values())
+        
+        # Calculate risk score
+        analysis["risk_score"] = self._calculate_bundle_risk_score(analysis["vulnerabilities"])
+        
+        logger.info(f"Bundle security analysis complete: {len(analysis['vulnerabilities'])} vulnerabilities, "
+                   f"risk score: {analysis['risk_score']:.2f}")
+        
+        return analysis
+
+    async def correlate_product_cves(
+        self, 
+        cves: list[CVEData],
+        product_name: str = "Red Hat OpenShift AI"
+    ) -> dict[str, Any]:
+        """Correlate CVEs to specific product components.
+
+        Args:
+            cves: List of CVE vulnerabilities
+            product_name: Product name for correlation
+
+        Returns:
+            Correlation results mapping CVEs to product components
+        """
+        logger.info(f"Correlating {len(cves)} CVEs for product: {product_name}")
+        
+        correlation = {
+            "product_name": product_name,
+            "total_cves": len(cves),
+            "component_mappings": {},
+            "severity_breakdown": {},
+            "timeline_analysis": {},
+            "correlation_confidence": {},
+            "correlated_at": datetime.now()
+        }
+        
+        # Component mapping patterns
+        component_patterns = {
+            "operator": ["operator", "controller", "rhods-operator"],
+            "serving": ["kserve", "modelmesh", "serving", "inference"],
+            "notebooks": ["notebook", "jupyter", "workbench"],
+            "pipelines": ["pipeline", "kubeflow", "workflow"],
+            "runtime": ["pytorch", "tensorflow", "triton", "openvino"],
+            "infrastructure": ["dashboard", "proxy", "api-server"],
+            "ai_ml": ["trustyai", "ai", "ml", "machine-learning"]
+        }
+        
+        # Analyze each CVE
+        for cve in cves:
+            cve_text = f"{cve.description} {cve.package_name or ''} {cve.cve_id}".lower()
+            
+            # Map CVE to components
+            mapped_components = []
+            for component, patterns in component_patterns.items():
+                for pattern in patterns:
+                    if pattern in cve_text:
+                        mapped_components.append(component)
+                        break
+            
+            # Store component mappings
+            for component in mapped_components:
+                if component not in correlation["component_mappings"]:
+                    correlation["component_mappings"][component] = []
+                correlation["component_mappings"][component].append({
+                    "cve_id": cve.cve_id,
+                    "severity": cve.severity.value,
+                    "cvss_score": cve.cvss_score,
+                    "confidence": "high" if len(mapped_components) == 1 else "medium"
+                })
+        
+        # Severity breakdown
+        for cve in cves:
+            severity = cve.severity.value
+            correlation["severity_breakdown"][severity] = correlation["severity_breakdown"].get(severity, 0) + 1
+        
+        # Timeline analysis (group by year)
+        for cve in cves:
+            year = cve.published_date.year
+            correlation["timeline_analysis"][year] = correlation["timeline_analysis"].get(year, 0) + 1
+        
+        logger.info(f"CVE correlation complete: {len(correlation['component_mappings'])} components mapped")
+        return correlation
+
+    def _calculate_bundle_risk_score(self, vulnerabilities: list[CVEData]) -> float:
+        """Calculate risk score for operator bundle vulnerabilities.
+
+        Args:
+            vulnerabilities: List of vulnerabilities
+
+        Returns:
+            Risk score (0-100)
+        """
+        if not vulnerabilities:
+            return 0.0
+        
+        score = 0.0
+        for vuln in vulnerabilities:
+            # Weight by severity
+            if vuln.severity.value == "Critical":
+                score += 20.0
+            elif vuln.severity.value == "High":
+                score += 15.0
+            elif vuln.severity.value == "Medium":
+                score += 8.0
+            elif vuln.severity.value == "Low":
+                score += 2.0
+            
+            # Additional weight for CVSS score
+            if vuln.cvss_score:
+                score += vuln.cvss_score * 2
+        
+        # Normalize to 0-100 scale
+        return min(score, 100.0)
+
 
 async def create_security_client(config) -> SecurityDataClient:
     """Create and configure a security data client.

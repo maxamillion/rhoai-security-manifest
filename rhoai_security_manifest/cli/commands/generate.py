@@ -129,6 +129,8 @@ def generate(
                     # Clean up API clients
                     await orchestrator.catalog_client.close()
                     await orchestrator.security_client.close()
+                    if orchestrator.product_listings_client:
+                        await orchestrator.product_listings_client.close()
 
             # Run the async analysis
             try:

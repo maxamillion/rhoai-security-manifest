@@ -9,6 +9,7 @@ from sqlalchemy import (
     TIMESTAMP,
     ForeignKey,
     Integer,
+    JSON,
     create_engine,
     func,
 )
@@ -25,6 +26,33 @@ class Base(DeclarativeBase):
     """Base class for all database models."""
 
     pass
+
+
+class ProductListing(Base):
+    """Model for cached Product Listings API data."""
+
+    __tablename__ = "product_listings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    product_id: Mapped[Optional[str]] = mapped_column(TEXT)
+    vendor: Mapped[str] = mapped_column(TEXT, nullable=False, default="Red Hat")
+    deployment_methods: Mapped[Optional[str]] = mapped_column(TEXT)  # JSON serialized list
+    functional_categories: Mapped[Optional[str]] = mapped_column(TEXT)  # JSON serialized list
+    operator_bundles: Mapped[Optional[str]] = mapped_column(TEXT)  # JSON serialized operator bundle data
+    description: Mapped[Optional[str]] = mapped_column(TEXT)
+    documentation_url: Mapped[Optional[str]] = mapped_column(TEXT)
+    support_url: Mapped[Optional[str]] = mapped_column(TEXT)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, nullable=False, default=func.now()
+    )
+    last_updated: Mapped[datetime] = mapped_column(
+        TIMESTAMP, nullable=False, default=func.now(), onupdate=func.now()
+    )
+    cache_expires_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ProductListing(id={self.id}, product='{self.product_name}', vendor='{self.vendor}')>"
 
 
 class Release(Base):
@@ -68,6 +96,12 @@ class Container(Base):
         TIMESTAMP, nullable=False, default=func.now()
     )
     last_scanned: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP)
+    
+    # Product Listings integration fields
+    source_method: Mapped[Optional[str]] = mapped_column(TEXT)  # "product_listings", "manual", "search"
+    operator_bundle_id: Mapped[Optional[str]] = mapped_column(TEXT)  # Reference to operator bundle
+    product_version: Mapped[Optional[str]] = mapped_column(TEXT)  # RHOAI version correlation
+    categories: Mapped[Optional[str]] = mapped_column(TEXT)  # JSON serialized list of categories
 
     # Relationships
     release: Mapped["Release"] = relationship("Release", back_populates="containers")
