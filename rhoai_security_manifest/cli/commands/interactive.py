@@ -37,11 +37,11 @@ def interactive(ctx: click.Context, theme: str):
     try:
         # Check if Textual is available
         try:
-            from textual.app import App
-        except ImportError:
+            import textual.app  # noqa: F401
+        except ImportError as e:
             console.print("[red]Interactive mode requires the 'textual' package[/red]")
             console.print("Install it with: pip install textual")
-            raise click.Abort()
+            raise click.Abort() from e
 
         # Launch TUI application
         console.print("[blue]Launching interactive mode...[/blue]")
@@ -58,7 +58,7 @@ def interactive(ctx: click.Context, theme: str):
     except Exception as e:
         logger.error(f"Interactive mode failed: {e}")
         console.print(f"[red]Error: {e}[/red]")
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 class SecurityManifestApp:

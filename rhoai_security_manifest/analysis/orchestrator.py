@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 import yaml
 
@@ -20,7 +20,7 @@ from .grading import SecurityGrade, SecurityGrader
 logger = get_logger("analysis.orchestrator")
 
 
-def load_container_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
+def load_container_config(config_path: Optional[Path] = None) -> dict[str, Any]:
     """Load container configuration from YAML file.
 
     Args:
@@ -47,7 +47,7 @@ def load_container_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
             return {}
 
     try:
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config = yaml.safe_load(f) or {}
             logger.info(f"Loaded container configuration from {config_path}")
             return config
@@ -62,9 +62,9 @@ class AnalysisResult:
     def __init__(
         self,
         release_version: str,
-        containers: List[Dict[str, Any]],
-        summary: Dict[str, Any],
-        metadata: Dict[str, Any],
+        containers: list[dict[str, Any]],
+        summary: dict[str, Any],
+        metadata: dict[str, Any],
     ):
         self.release_version = release_version
         self.containers = containers
@@ -104,7 +104,7 @@ class SecurityAnalysisOrchestrator:
         release_version: str,
         force_refresh: bool = False,
         offline_mode: bool = False,
-        container_filter: Optional[List[str]] = None,
+        container_filter: Optional[list[str]] = None,
         include_packages: bool = False,
     ) -> AnalysisResult:
         """Perform complete security analysis for a release.
@@ -166,8 +166,8 @@ class SecurityAnalysisOrchestrator:
         release_version: str,
         offline_mode: bool,
         force_refresh: bool,
-        container_filter: Optional[List[str]],
-    ) -> List[ContainerImage]:
+        container_filter: Optional[list[str]],
+    ) -> list[ContainerImage]:
         """Discover containers for the release."""
         if offline_mode:
             return self._load_cached_containers(release_version, container_filter)
@@ -204,8 +204,8 @@ class SecurityAnalysisOrchestrator:
             raise
 
     def _load_cached_containers(
-        self, release_version: str, container_filter: Optional[List[str]]
-    ) -> List[ContainerImage]:
+        self, release_version: str, container_filter: Optional[list[str]]
+    ) -> list[ContainerImage]:
         """Load containers from database cache."""
         with self.session_factory() as session:
             release_repo = ReleaseRepository(session)
@@ -240,11 +240,11 @@ class SecurityAnalysisOrchestrator:
 
     async def _analyze_container_security(
         self,
-        containers: List[ContainerImage],
+        containers: list[ContainerImage],
         offline_mode: bool,
         force_refresh: bool,
         include_packages: bool,
-    ) -> List[ContainerSecurityInfo]:
+    ) -> list[ContainerSecurityInfo]:
         """Analyze security for all containers using package-based approach."""
         if offline_mode:
             return self._load_cached_security_data(containers)
@@ -429,8 +429,8 @@ class SecurityAnalysisOrchestrator:
         return security_analyses
 
     def _load_cached_security_data(
-        self, containers: List[ContainerImage]
-    ) -> List[ContainerSecurityInfo]:
+        self, containers: list[ContainerImage]
+    ) -> list[ContainerSecurityInfo]:
         """Load security data from database cache."""
         security_analyses = []
 
@@ -491,8 +491,8 @@ class SecurityAnalysisOrchestrator:
         return security_analyses
 
     def _grade_containers(
-        self, security_analyses: List[ContainerSecurityInfo]
-    ) -> List[Tuple[str, SecurityGrade, int, Dict[str, Any]]]:
+        self, security_analyses: list[ContainerSecurityInfo]
+    ) -> list[tuple[str, SecurityGrade, int, dict[str, Any]]]:
         """Grade all containers."""
         graded_containers = []
 
@@ -508,9 +508,9 @@ class SecurityAnalysisOrchestrator:
     async def _store_results(
         self,
         release_version: str,
-        containers: List[ContainerImage],
-        security_analyses: List[ContainerSecurityInfo],
-        graded_containers: List[Tuple[str, SecurityGrade, int, Dict[str, Any]]],
+        containers: list[ContainerImage],
+        security_analyses: list[ContainerSecurityInfo],
+        graded_containers: list[tuple[str, SecurityGrade, int, dict[str, Any]]],
     ) -> None:
         """Store analysis results in database."""
         try:
@@ -565,9 +565,9 @@ class SecurityAnalysisOrchestrator:
     def _compile_results(
         self,
         release_version: str,
-        containers: List[ContainerImage],
-        security_analyses: List[ContainerSecurityInfo],
-        graded_containers: List[Tuple[str, SecurityGrade, int, Dict[str, Any]]],
+        containers: list[ContainerImage],
+        security_analyses: list[ContainerSecurityInfo],
+        graded_containers: list[tuple[str, SecurityGrade, int, dict[str, Any]]],
         start_time: datetime,
     ) -> AnalysisResult:
         """Compile final analysis results."""

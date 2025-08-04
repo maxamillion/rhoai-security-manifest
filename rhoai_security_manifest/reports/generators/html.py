@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from jinja2 import BaseLoader, Environment
 
@@ -23,7 +23,7 @@ class HTMLReportGenerator:
         self.env.filters["severity_color"] = self._get_severity_color
         self.env.filters["grade_color"] = self._get_grade_color
 
-    def generate_report(self, report_data: Dict[str, Any], output_path: Path) -> None:
+    def generate_report(self, report_data: dict[str, Any], output_path: Path) -> None:
         """Generate comprehensive HTML security report.
 
         Args:
@@ -46,7 +46,7 @@ class HTMLReportGenerator:
 
         logger.info(f"HTML report generated successfully: {output_path}")
 
-    def _enhance_report_data(self, report_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _enhance_report_data(self, report_data: dict[str, Any]) -> dict[str, Any]:
         """Enhance report data with HTML-specific information."""
         enhanced = report_data.copy()
 
@@ -168,7 +168,7 @@ class HTMLReportGenerator:
                     <i class="fas fa-chart-line me-2"></i>
                     Executive Summary
                 </h2>
-                
+
                 <div class="row">
                     <div class="col-md-3">
                         <div class="card text-center">
@@ -213,7 +213,7 @@ class HTMLReportGenerator:
                     <i class="fas fa-graduation-cap me-2"></i>
                     Security Grade Distribution
                 </h2>
-                
+
                 <div class="row">
                     {% for grade, count in summary.grade_distribution.items() %}
                     <div class="col-md-2">
@@ -234,7 +234,7 @@ class HTMLReportGenerator:
                     <i class="fas fa-bug me-2"></i>
                     Vulnerability Summary
                 </h2>
-                
+
                 <div class="row">
                     {% for severity, count in severity_totals.items() %}
                     <div class="col-md-3">
@@ -257,7 +257,7 @@ class HTMLReportGenerator:
                     <i class="fas fa-cubes me-2"></i>
                     Container Analysis
                 </h2>
-                
+
                 <div class="row">
                     {% for container in containers %}
                     <div class="col-md-6 mb-4">
@@ -282,7 +282,7 @@ class HTMLReportGenerator:
                                         <span class="fs-4 text-danger">{{ container.total_vulnerabilities }}</span>
                                     </div>
                                 </div>
-                                
+
                                 <div class="mb-3">
                                     <strong>Vulnerability Breakdown:</strong><br>
                                     {% for severity, count in container.vulnerabilities.items() %}
@@ -293,7 +293,7 @@ class HTMLReportGenerator:
                                     {% endif %}
                                     {% endfor %}
                                 </div>
-                                
+
                                 <div class="row text-muted small">
                                     <div class="col-sm-6">
                                         <i class="fas fa-box me-1"></i>
@@ -332,10 +332,10 @@ class HTMLReportGenerator:
 
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    
+
     <!-- Chart.js for potential future use -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
+
     <script>
         // Add any interactive features here
         document.addEventListener('DOMContentLoaded', function() {

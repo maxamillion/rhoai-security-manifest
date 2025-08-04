@@ -2,7 +2,7 @@
 
 import json
 import time
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import httpx
 
@@ -11,7 +11,7 @@ from .logging import get_logger
 logger = get_logger("http_debug")
 
 
-def sanitize_headers(headers: Dict[str, str]) -> Dict[str, str]:
+def sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
     """Sanitize sensitive headers for logging.
 
     Args:
@@ -75,8 +75,8 @@ def format_json_content(content: str) -> str:
 def log_http_request(
     method: str,
     url: str,
-    params: Optional[Dict] = None,
-    headers: Optional[Dict[str, str]] = None,
+    params: Optional[dict] = None,
+    headers: Optional[dict[str, str]] = None,
     content: Optional[str] = None,
 ) -> None:
     """Log HTTP request details in debug mode.
@@ -91,7 +91,7 @@ def log_http_request(
     if not logger.isEnabledFor(10):  # DEBUG level is 10
         return
 
-    logger.debug(f"=== HTTP Request ===")
+    logger.debug("=== HTTP Request ===")
     logger.debug(f"Method: {method}")
     logger.debug(f"URL: {url}")
 
@@ -133,7 +133,7 @@ def log_http_response(
             logger.debug(f"Expected 404 (endpoint exploration): {error}")
             return
 
-    logger.debug(f"=== HTTP Response ===")
+    logger.debug("=== HTTP Response ===")
 
     if error:
         # Reduce verbosity for 404 errors during endpoint exploration
@@ -142,7 +142,7 @@ def log_http_response(
             and error.response is not None
             and error.response.status_code == 404
         ):
-            logger.debug(f"Status: 404 Not Found (endpoint exploration)")
+            logger.debug("Status: 404 Not Found (endpoint exploration)")
             logger.debug(f"Duration: {duration:.3f}s")
         else:
             logger.debug(f"Status: ERROR - {error}")
@@ -180,14 +180,14 @@ def log_http_response(
         except Exception as e:
             logger.debug(f"Response Body: <could not read: {e}>")
 
-    logger.debug(f"=== End HTTP Response ===")
+    logger.debug("=== End HTTP Response ===")
 
 
 def debug_http_request(
     method: str,
     url: str,
-    params: Optional[Dict] = None,
-    headers: Optional[Dict[str, str]] = None,
+    params: Optional[dict] = None,
+    headers: Optional[dict[str, str]] = None,
     content: Optional[str] = None,
     suppress_expected_404: bool = False,
 ):

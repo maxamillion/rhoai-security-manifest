@@ -1,7 +1,7 @@
 """Generate command for creating security manifests."""
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import click
 from rich.console import Console
@@ -52,7 +52,7 @@ def generate(
     packages: bool,
     offline: bool,
     force_refresh: bool,
-    containers: List[str],
+    containers: list[str],
 ):
     """Generate security manifest for an OpenShift AI release.
 
@@ -75,7 +75,7 @@ def generate(
         osai-security-manifest generate --release 2.8.0 --offline
     """
     config = ctx.obj["config"]
-    db_manager = ctx.obj["db_manager"]
+    ctx.obj["db_manager"]
 
     logger.info(f"Starting manifest generation for release {release}")
 
@@ -184,7 +184,7 @@ def generate(
                         "[cyan]To add containers:[/cyan] Edit the file and add container definitions under your release version"
                     )
 
-                raise click.Abort()
+                raise click.Abort() from None
 
             progress.update(task, description="Generating report...")
 
@@ -210,7 +210,7 @@ def generate(
     except Exception as e:
         logger.error(f"Manifest generation failed: {e}")
         console.print(f"[red]Error: {e}[/red]")
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 def _validate_release_format(release: str) -> None:
@@ -342,8 +342,8 @@ def _write_markdown_report(report_data: dict, output_path: Path) -> None:
     """Write Markdown format report."""
     md_content = f"""# OpenShift AI Security Manifest
 
-**Release:** {report_data['metadata']['release']}  
-**Generated:** {report_data['metadata']['generated_at']}  
+**Release:** {report_data['metadata']['release']}
+**Generated:** {report_data['metadata']['generated_at']}
 
 ## Summary
 

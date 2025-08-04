@@ -246,7 +246,7 @@ class ConfigManager:
             # yaml not available, skip file loading
             return {}
         except Exception as e:
-            raise ValueError(f"Failed to load config file {config_file}: {e}")
+            raise ValueError(f"Failed to load config file {config_file}: {e}") from e
 
     def _load_from_environment(self, config_data: dict) -> dict:
         """Load configuration from environment variables.
@@ -375,8 +375,8 @@ class ConfigManager:
 
             with open(save_path, "w") as f:
                 yaml.safe_dump(self._config.dict(), f, default_flow_style=False)
-        except ImportError:
-            raise ValueError("PyYAML is required to save configuration files")
+        except ImportError as e:
+            raise ValueError("PyYAML is required to save configuration files") from e
 
     @property
     def config(self) -> Config:

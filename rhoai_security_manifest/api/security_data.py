@@ -3,14 +3,14 @@
 import asyncio
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from urllib.parse import urljoin
 
 import httpx
 from pydantic import BaseModel, Field
 
-from ..utils.logging import get_logger
 from ..utils.http_debug import debug_http_request
+from ..utils.logging import get_logger
 
 logger = get_logger("api.security_data")
 
@@ -47,7 +47,7 @@ class CVEData(BaseModel):
     fixed_in_version: Optional[str] = None
     package_name: Optional[str] = None
     package_version: Optional[str] = None
-    references: List[str] = Field(default_factory=list)
+    references: list[str] = Field(default_factory=list)
     rhsa_id: Optional[str] = None  # Red Hat Security Advisory ID
 
 
@@ -60,9 +60,9 @@ class SecurityAdvisory(BaseModel):
     published_date: datetime
     updated_date: Optional[datetime] = None
     summary: str
-    affected_packages: List[str] = Field(default_factory=list)
-    cves: List[str] = Field(default_factory=list)
-    references: List[str] = Field(default_factory=list)
+    affected_packages: list[str] = Field(default_factory=list)
+    cves: list[str] = Field(default_factory=list)
+    references: list[str] = Field(default_factory=list)
 
 
 class RPMPackage(BaseModel):
@@ -95,8 +95,8 @@ class ContainerManifest(BaseModel):
 
     image_id: str
     image_digest: str
-    packages: List[RPMPackage] = Field(default_factory=list)
-    content_sets: List[str] = Field(default_factory=list)
+    packages: list[RPMPackage] = Field(default_factory=list)
+    content_sets: list[str] = Field(default_factory=list)
     build_date: Optional[datetime] = None
 
     @property
@@ -110,15 +110,15 @@ class ContainerSecurityInfo(BaseModel):
 
     container_name: str
     digest: str
-    vulnerabilities: List[CVEData] = Field(default_factory=list)
-    advisories: List[SecurityAdvisory] = Field(default_factory=list)
+    vulnerabilities: list[CVEData] = Field(default_factory=list)
+    advisories: list[SecurityAdvisory] = Field(default_factory=list)
     packages_scanned: int = 0
     last_updated: datetime = Field(default_factory=datetime.now)
     manifest: Optional[ContainerManifest] = None
-    vulnerable_packages: Dict[str, List[CVEData]] = Field(default_factory=dict)
+    vulnerable_packages: dict[str, list[CVEData]] = Field(default_factory=dict)
 
     @property
-    def vulnerability_summary(self) -> Dict[str, int]:
+    def vulnerability_summary(self) -> dict[str, int]:
         """Get vulnerability count by severity."""
         summary = {severity.value: 0 for severity in Severity}
         for vuln in self.vulnerabilities:
@@ -205,7 +205,7 @@ class SecurityDataClient:
         after_date: Optional[datetime] = None,
         severity: Optional[Severity] = None,
         limit: int = 100,
-    ) -> List[CVEData]:
+    ) -> list[CVEData]:
         """Search for CVEs matching criteria.
 
         Args:
@@ -244,7 +244,7 @@ class SecurityDataClient:
 
     async def get_package_vulnerabilities(
         self, package_name: str, package_version: str, package_release: str
-    ) -> List[CVEData]:
+    ) -> list[CVEData]:
         """Get vulnerabilities for a specific RPM package.
 
         Args:
@@ -261,7 +261,6 @@ class SecurityDataClient:
 
         # Search for CVEs related to this package
         # Use package name and version in the query
-        search_query = f"{package_name} {package_version}"
 
         try:
             # For demo purposes, return simulated vulnerabilities for known packages
@@ -396,8 +395,8 @@ class SecurityDataClient:
                 raise
 
     async def bulk_analyze_containers(
-        self, containers: List[Dict[str, str]], include_packages: bool = False
-    ) -> List[ContainerSecurityInfo]:
+        self, containers: list[dict[str, str]], include_packages: bool = False
+    ) -> list[ContainerSecurityInfo]:
         """Legacy method - kept for compatibility but logs deprecation warning.
 
         This method is deprecated. The new workflow requires:
@@ -429,13 +428,13 @@ class SecurityDataClient:
             for container in containers
         ]
 
-    async def _get_container_direct(self, digest: str) -> List[CVEData]:
+    async def _get_container_direct(self, digest: str) -> list[CVEData]:
         """Attempt direct container vulnerability lookup."""
         # This would be the ideal case, but may not be available
         # in the current Red Hat APIs
         return []
 
-    async def _search_by_container_name(self, container_name: str) -> List[CVEData]:
+    async def _search_by_container_name(self, container_name: str) -> list[CVEData]:
         """Search for vulnerabilities by container name patterns."""
         # Search for CVEs mentioning this container or related packages
         search_terms = [
@@ -456,8 +455,8 @@ class SecurityDataClient:
         return all_cves
 
     async def _get_advisories_for_packages(
-        self, package_names: List[str]
-    ) -> List[SecurityAdvisory]:
+        self, package_names: list[str]
+    ) -> list[SecurityAdvisory]:
         """Get security advisories for a list of packages."""
         # For demo purposes, return empty list
         # In production, this would query the actual API
@@ -466,7 +465,7 @@ class SecurityDataClient:
 
     async def _get_related_advisories(
         self, container_name: str
-    ) -> List[SecurityAdvisory]:
+    ) -> list[SecurityAdvisory]:
         """Get security advisories related to the container."""
         async with self._semaphore:
             url = urljoin(self.base_url, "security/advisory")
@@ -492,7 +491,7 @@ class SecurityDataClient:
                 return []
 
     async def _make_request(
-        self, method: str, url: str, params: Optional[Dict] = None, **kwargs
+        self, method: str, url: str, params: Optional[dict] = None, **kwargs
     ) -> httpx.Response:
         """Make HTTP request with retry logic."""
         last_exception = None
@@ -534,7 +533,7 @@ class SecurityDataClient:
 
         raise last_exception
 
-    def _parse_cve_data(self, data: Dict[str, Any]) -> CVEData:
+    def _parse_cve_data(self, data: dict[str, Any]) -> CVEData:
         """Parse CVE data from API response."""
         cve_id = data.get("cve", "")
 
@@ -589,7 +588,7 @@ class SecurityDataClient:
             rhsa_id=data.get("rhsa"),
         )
 
-    def _parse_advisory_data(self, data: Dict[str, Any]) -> SecurityAdvisory:
+    def _parse_advisory_data(self, data: dict[str, Any]) -> SecurityAdvisory:
         """Parse security advisory data from API response."""
         advisory_id = data.get("name", "")
 

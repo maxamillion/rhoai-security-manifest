@@ -105,7 +105,7 @@ class DatabaseManager:
             with self.engine.connect() as conn:
                 # Check if tables exist
                 tables_query = """
-                SELECT name FROM sqlite_master 
+                SELECT name FROM sqlite_master
                 WHERE type='table' AND name NOT LIKE 'sqlite_%'
                 """
                 tables = conn.execute(text(tables_query)).fetchall()
@@ -117,7 +117,7 @@ class DatabaseManager:
 
                 # Check indexes
                 indexes_query = """
-                SELECT name FROM sqlite_master 
+                SELECT name FROM sqlite_master
                 WHERE type='index' AND name NOT LIKE 'sqlite_%'
                 """
                 indexes = conn.execute(text(indexes_query)).fetchall()
@@ -244,12 +244,12 @@ class DatabaseManager:
             with self.engine.connect() as conn:
                 # Get actual tables from database
                 tables_query = """
-                SELECT name FROM sqlite_master 
+                SELECT name FROM sqlite_master
                 WHERE type='table' AND name NOT LIKE 'sqlite_%'
                 """
-                actual_tables = set(
+                actual_tables = {
                     row[0] for row in conn.execute(text(tables_query)).fetchall()
-                )
+                }
 
                 if expected_tables != actual_tables:
                     missing = expected_tables - actual_tables

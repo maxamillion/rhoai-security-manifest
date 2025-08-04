@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
 from ..api.security_data import ContainerSecurityInfo, Severity
 from ..utils.logging import get_logger
@@ -73,7 +73,7 @@ class SecurityGrader:
 
     def grade_container(
         self, security_info: ContainerSecurityInfo, redhat_grade: Optional[str] = None
-    ) -> Tuple[SecurityGrade, int, Dict[str, any]]:
+    ) -> tuple[SecurityGrade, int, dict[str, any]]:
         """Grade a container's security posture.
 
         Args:
@@ -107,9 +107,9 @@ class SecurityGrader:
 
     def grade_multiple_containers(
         self,
-        containers_info: List[ContainerSecurityInfo],
-        redhat_grades: Optional[Dict[str, str]] = None,
-    ) -> List[Tuple[str, SecurityGrade, int, Dict[str, any]]]:
+        containers_info: list[ContainerSecurityInfo],
+        redhat_grades: Optional[dict[str, str]] = None,
+    ) -> list[tuple[str, SecurityGrade, int, dict[str, any]]]:
         """Grade multiple containers.
 
         Args:
@@ -132,7 +132,7 @@ class SecurityGrader:
 
     def _calculate_security_score(
         self, security_info: ContainerSecurityInfo
-    ) -> Tuple[int, Dict[str, any]]:
+    ) -> tuple[int, dict[str, any]]:
         """Calculate security score using vulnerability data.
 
         Args:
@@ -198,7 +198,7 @@ class SecurityGrader:
 
         return final_score, breakdown
 
-    def _calculate_age_penalty(self, vulnerabilities: List) -> Dict[str, any]:
+    def _calculate_age_penalty(self, vulnerabilities: list) -> dict[str, any]:
         """Calculate penalty for old vulnerabilities.
 
         Args:
@@ -241,7 +241,7 @@ class SecurityGrader:
 
         return age_breakdown
 
-    def _calculate_unpatched_penalty(self, vulnerabilities: List) -> Dict[str, any]:
+    def _calculate_unpatched_penalty(self, vulnerabilities: list) -> dict[str, any]:
         """Calculate penalty for unpatched vulnerabilities.
 
         Args:
@@ -330,8 +330,8 @@ class SecurityGrader:
             return False
 
     def get_grade_distribution(
-        self, graded_containers: List[Tuple[str, SecurityGrade, int, Dict]]
-    ) -> Dict[str, int]:
+        self, graded_containers: list[tuple[str, SecurityGrade, int, dict]]
+    ) -> dict[str, int]:
         """Get distribution of grades across containers.
 
         Args:
@@ -348,8 +348,8 @@ class SecurityGrader:
         return distribution
 
     def get_security_summary(
-        self, graded_containers: List[Tuple[str, SecurityGrade, int, Dict]]
-    ) -> Dict[str, any]:
+        self, graded_containers: list[tuple[str, SecurityGrade, int, dict]]
+    ) -> dict[str, any]:
         """Get overall security summary for a set of containers.
 
         Args:
@@ -390,7 +390,7 @@ class SecurityGrader:
         }
 
 
-def create_grader(custom_criteria: Optional[Dict] = None) -> SecurityGrader:
+def create_grader(custom_criteria: Optional[dict] = None) -> SecurityGrader:
     """Create a security grader with optional custom criteria.
 
     Args:

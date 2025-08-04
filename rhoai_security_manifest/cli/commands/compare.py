@@ -136,7 +136,7 @@ def compare(
     except Exception as e:
         logger.error(f"Comparison failed: {e}")
         console.print(f"[red]Error: {e}[/red]")
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 def _load_release_data(
@@ -459,7 +459,7 @@ def _write_html_comparison(comparison_data: dict, output_path: Path) -> None:
             <h1>Release Comparison Report</h1>
             <h2>{comparison_data['from_release']} → {comparison_data['to_release']}</h2>
         </div>
-        
+
         <div class="summary">
             <h2>Summary</h2>
             <p>Containers Compared: {comparison_data['summary']['containers_compared']}</p>
@@ -468,7 +468,7 @@ def _write_html_comparison(comparison_data: dict, output_path: Path) -> None:
             <p>New Vulnerabilities: {comparison_data['summary']['new_vulnerabilities']}</p>
             <p>Resolved Vulnerabilities: {comparison_data['summary']['resolved_vulnerabilities']}</p>
         </div>
-        
+
         <div class="containers">
             <h2>Container Details</h2>
             {''.join(f'<div class="container {c["grade_change"]}"><h3>{c["name"]}</h3><p>Grade: {c["from_grade"]} → {c["to_grade"]}</p><p>New CVEs: {c["total_new"]}, Resolved: {c["total_resolved"]}</p></div>' for c in comparison_data["containers"])}

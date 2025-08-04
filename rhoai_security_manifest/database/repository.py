@@ -1,7 +1,7 @@
 """Data access layer for database operations."""
 
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Optional
 
 from sqlalchemy import and_, desc, func
 from sqlalchemy.orm import Session, joinedload
@@ -26,7 +26,7 @@ class ReleaseRepository:
         self.session.commit()
         return release
 
-    def get_all(self) -> List[Release]:
+    def get_all(self) -> list[Release]:
         """Get all releases ordered by version."""
         return self.session.query(Release).order_by(desc(Release.created_at)).all()
 
@@ -63,7 +63,7 @@ class ContainerRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def get_by_release(self, release_id: int) -> List[Container]:
+    def get_by_release(self, release_id: int) -> list[Container]:
         """Get all containers for a release."""
         return (
             self.session.query(Container)
@@ -131,7 +131,7 @@ class VulnerabilityRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def get_by_container(self, container_id: int) -> List[Vulnerability]:
+    def get_by_container(self, container_id: int) -> list[Vulnerability]:
         """Get all vulnerabilities for a container."""
         return (
             self.session.query(Vulnerability)
@@ -164,7 +164,7 @@ class VulnerabilityRepository:
         self.session.commit()
         return vulnerability
 
-    def get_by_severity(self, container_id: int, severity: str) -> List[Vulnerability]:
+    def get_by_severity(self, container_id: int, severity: str) -> list[Vulnerability]:
         """Get vulnerabilities by severity for a container."""
         return (
             self.session.query(Vulnerability)
@@ -187,9 +187,9 @@ class VulnerabilityRepository:
             .group_by(Vulnerability.severity)
             .all()
         )
-        return {severity: count for severity, count in results}
+        return dict(results)
 
-    def mark_as_resolved(self, container_id: int, cve_ids: List[str]) -> int:
+    def mark_as_resolved(self, container_id: int, cve_ids: list[str]) -> int:
         """Mark vulnerabilities as resolved.
 
         Args:
@@ -214,7 +214,7 @@ class VulnerabilityRepository:
 
     def get_new_vulnerabilities(
         self, container_id: int, since_date: datetime
-    ) -> List[Vulnerability]:
+    ) -> list[Vulnerability]:
         """Get new vulnerabilities since a specific date."""
         return (
             self.session.query(Vulnerability)
@@ -269,7 +269,7 @@ class PackageRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def get_by_container(self, container_id: int) -> List[Package]:
+    def get_by_container(self, container_id: int) -> list[Package]:
         """Get all packages for a container."""
         return (
             self.session.query(Package)
@@ -303,7 +303,7 @@ class PackageRepository:
             package.vulnerability_count = count
             self.session.commit()
 
-    def get_vulnerable_packages(self, container_id: int) -> List[Package]:
+    def get_vulnerable_packages(self, container_id: int) -> list[Package]:
         """Get packages with vulnerabilities for a container."""
         return (
             self.session.query(Package)

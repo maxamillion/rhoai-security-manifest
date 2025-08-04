@@ -2,14 +2,14 @@
 
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from urllib.parse import urljoin
 
 import httpx
 from pydantic import BaseModel, Field
 
-from ..utils.logging import get_logger
 from ..utils.http_debug import debug_http_request
+from ..utils.logging import get_logger
 
 logger = get_logger("api.container_catalog")
 
@@ -24,8 +24,8 @@ class ContainerImage(BaseModel):
     created_at: datetime
     architecture: str = "x86_64"
     size_bytes: Optional[int] = None
-    layers: List[str] = Field(default_factory=list)
-    labels: Dict[str, str] = Field(default_factory=dict)
+    layers: list[str] = Field(default_factory=list)
+    labels: dict[str, str] = Field(default_factory=dict)
 
 
 class CatalogSearchResult(BaseModel):
@@ -34,7 +34,7 @@ class CatalogSearchResult(BaseModel):
     total: int
     page: int
     page_size: int
-    images: List[ContainerImage]
+    images: list[ContainerImage]
 
 
 class ContainerCatalogClient:
@@ -83,8 +83,8 @@ class ContainerCatalogClient:
         await self._client.aclose()
 
     async def _try_endpoints_smartly(
-        self, endpoint_patterns: List[str], **format_args
-    ) -> Optional[Dict[str, Any]]:
+        self, endpoint_patterns: list[str], **format_args
+    ) -> Optional[dict[str, Any]]:
         """Try multiple endpoints intelligently, skipping known failed ones.
 
         Args:
@@ -180,7 +180,7 @@ class ContainerCatalogClient:
         query: str,
         page: int = 1,
         page_size: int = 100,
-        filter_params: Optional[Dict[str, str]] = None,
+        filter_params: Optional[dict[str, str]] = None,
     ) -> CatalogSearchResult:
         """Search for containers in the catalog.
 
@@ -272,10 +272,10 @@ class ContainerCatalogClient:
     async def discover_rhoai_containers(
         self,
         release_version: str,
-        filter_names: Optional[List[str]] = None,
-        manual_containers: Optional[List[Dict[str, str]]] = None,
+        filter_names: Optional[list[str]] = None,
+        manual_containers: Optional[list[dict[str, str]]] = None,
         hybrid_discovery: bool = True,
-    ) -> List[ContainerImage]:
+    ) -> list[ContainerImage]:
         """Discover all RHOAI containers for a specific release.
 
         Args:
@@ -489,7 +489,7 @@ class ContainerCatalogClient:
 
         return all_containers
 
-    async def get_container_vulnerabilities(self, container_id: str) -> Dict[str, Any]:
+    async def get_container_vulnerabilities(self, container_id: str) -> dict[str, Any]:
         """Get vulnerability information for a container.
 
         Args:
@@ -510,7 +510,7 @@ class ContainerCatalogClient:
                     return {}
                 raise
 
-    async def get_image_by_id(self, image_id: str) -> Optional[Dict[str, Any]]:
+    async def get_image_by_id(self, image_id: str) -> Optional[dict[str, Any]]:
         """Get detailed image information by image ID using GraphQL endpoint.
 
         Args:
@@ -544,7 +544,7 @@ class ContainerCatalogClient:
 
             return result
 
-    async def get_rpm_manifest(self, image_id: str) -> Optional[Dict[str, Any]]:
+    async def get_rpm_manifest(self, image_id: str) -> Optional[dict[str, Any]]:
         """Get RPM manifest for a container image.
 
         Args:
@@ -586,7 +586,7 @@ class ContainerCatalogClient:
 
             return result
 
-    async def get_image_vulnerabilities(self, image_id: str) -> List[Dict[str, Any]]:
+    async def get_image_vulnerabilities(self, image_id: str) -> list[dict[str, Any]]:
         """Get vulnerabilities for a specific image using GraphQL endpoint.
 
         Args:
@@ -612,7 +612,7 @@ class ContainerCatalogClient:
                 raise
 
     async def _make_request(
-        self, method: str, url: str, params: Optional[Dict] = None, **kwargs
+        self, method: str, url: str, params: Optional[dict] = None, **kwargs
     ) -> httpx.Response:
         """Make HTTP request with retry logic.
 
@@ -671,7 +671,7 @@ class ContainerCatalogClient:
         # Re-raise the last exception
         raise last_exception
 
-    def _parse_container_data(self, data: Dict[str, Any]) -> ContainerImage:
+    def _parse_container_data(self, data: dict[str, Any]) -> ContainerImage:
         """Parse container data from API response.
 
         Args:
@@ -732,9 +732,9 @@ class ContainerCatalogClient:
 
     def _matches_search_criteria(
         self,
-        item: Dict[str, Any],
+        item: dict[str, Any],
         query: str,
-        filter_params: Optional[Dict[str, str]] = None,
+        filter_params: Optional[dict[str, str]] = None,
     ) -> bool:
         """Check if a repository item matches search criteria.
 
@@ -808,7 +808,7 @@ class ContainerCatalogClient:
         return True
 
     def _is_rhoai_container(
-        self, container: ContainerImage, namespace_patterns: List[str]
+        self, container: ContainerImage, namespace_patterns: list[str]
     ) -> bool:
         """Check if a container belongs to RHOAI/OpenShift AI.
 

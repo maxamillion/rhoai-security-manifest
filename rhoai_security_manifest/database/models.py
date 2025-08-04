@@ -1,7 +1,7 @@
 """Database models for the security manifest tool."""
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 from sqlalchemy import (
     REAL,
@@ -43,7 +43,7 @@ class Release(Base):
     )
 
     # Relationships
-    containers: Mapped[List["Container"]] = relationship(
+    containers: Mapped[list["Container"]] = relationship(
         "Container", back_populates="release", cascade="all, delete-orphan"
     )
 
@@ -71,10 +71,10 @@ class Container(Base):
 
     # Relationships
     release: Mapped["Release"] = relationship("Release", back_populates="containers")
-    vulnerabilities: Mapped[List["Vulnerability"]] = relationship(
+    vulnerabilities: Mapped[list["Vulnerability"]] = relationship(
         "Vulnerability", back_populates="container", cascade="all, delete-orphan"
     )
-    packages: Mapped[List["Package"]] = relationship(
+    packages: Mapped[list["Package"]] = relationship(
         "Package", back_populates="container", cascade="all, delete-orphan"
     )
 

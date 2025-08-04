@@ -5,6 +5,7 @@ from typing import Optional
 import click
 from rich.console import Console
 from rich.table import Table
+from sqlalchemy import text
 
 from ...utils.logging import get_logger
 
@@ -94,7 +95,7 @@ def cache(
     except Exception as e:
         logger.error(f"Cache management failed: {e}")
         console.print(f"[red]Error: {e}[/red]")
-        raise click.Abort()
+        raise click.Abort() from e
 
 
 def _show_cache_stats(db_manager, config) -> None:
@@ -249,10 +250,10 @@ def _clear_cache(db_manager, release: Optional[str]) -> None:
 
         if release:
             # TODO: Implement release-specific clearing
-            cleared_count = 0  # Placeholder
+            pass  # Placeholder
         else:
             # Clear all data (keep schema)
-            cleared_count = db_manager.cleanup_old_data(0)  # 0 days = clear all
+            db_manager.cleanup_old_data(0)  # 0 days = clear all
 
         console.print(f"[green]✓ Cleared {total_records} total records[/green]")
         logger.info(f"Cache cleared: {total_records} records removed")
@@ -324,10 +325,10 @@ def _parse_time_period(time_str: str) -> int:
         else:
             # Assume it's days if no suffix
             return int(time_str)
-    except ValueError:
+    except ValueError as e:
         raise click.BadParameter(
             f"Invalid time period: {time_str}. Use format like '30d', '7d', '24h'"
-        )
+        ) from e
 
 
 def _estimate_cleanup_savings(db_manager, days_to_keep: int) -> dict:
