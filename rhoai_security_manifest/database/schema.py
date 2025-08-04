@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import text
-from sqlalchemy.engine import Engine
 
 from .models import Base, create_database_engine, create_tables
 
@@ -18,7 +17,7 @@ class DatabaseManager:
 
     def __init__(self, database_url: str = "sqlite:///security_manifest.db"):
         """Initialize database manager.
-        
+
         Args:
             database_url: Database connection URL
         """
@@ -60,10 +59,10 @@ class DatabaseManager:
 
     def backup_database(self, backup_path: Optional[Path] = None) -> Path:
         """Create a backup of the database.
-        
+
         Args:
             backup_path: Optional path for backup file
-            
+
         Returns:
             Path to the backup file
         """
@@ -72,12 +71,16 @@ class DatabaseManager:
 
         # Extract database file path from URL
         db_path = Path(self.database_url.replace("sqlite:///", ""))
-        
+
         if backup_path is None:
-            backup_path = db_path.parent / f"{db_path.stem}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            backup_path = (
+                db_path.parent
+                / f"{db_path.stem}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            )
 
         if db_path.exists():
             import shutil
+
             shutil.copy2(db_path, backup_path)
             logger.info(f"Database backed up to: {backup_path}")
         else:
@@ -87,7 +90,7 @@ class DatabaseManager:
 
     def check_database_health(self) -> dict:
         """Check database health and return statistics.
-        
+
         Returns:
             Dictionary with database health information
         """
@@ -106,7 +109,7 @@ class DatabaseManager:
                 WHERE type='table' AND name NOT LIKE 'sqlite_%'
                 """
                 tables = conn.execute(text(tables_query)).fetchall()
-                
+
                 for (table_name,) in tables:
                     count_query = f"SELECT COUNT(*) FROM {table_name}"
                     count = conn.execute(text(count_query)).scalar()
@@ -124,7 +127,9 @@ class DatabaseManager:
                 if "sqlite" in self.database_url:
                     db_path = Path(self.database_url.replace("sqlite:///", ""))
                     if db_path.exists():
-                        health_info["size_mb"] = round(db_path.stat().st_size / (1024 * 1024), 2)
+                        health_info["size_mb"] = round(
+                            db_path.stat().st_size / (1024 * 1024), 2
+                        )
 
                 health_info["status"] = "healthy"
                 logger.info("Database health check completed successfully")
@@ -137,15 +142,15 @@ class DatabaseManager:
 
     def cleanup_old_data(self, days_to_keep: int = 180) -> dict:
         """Clean up old data from the database.
-        
+
         Args:
             days_to_keep: Number of days to retain data
-            
+
         Returns:
             Dictionary with cleanup statistics
         """
-        from .repository import ReleaseRepository
         from .models import SessionLocal
+        from .repository import ReleaseRepository
 
         cleanup_stats = {
             "releases_deleted": 0,
@@ -157,57 +162,66 @@ class DatabaseManager:
         try:
             with SessionLocal() as session:
                 repo = ReleaseRepository(session)
-                
+
                 # Count related records before deletion
                 from datetime import datetime, timedelta
+
                 cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
-                
+
                 # Get count of records to be deleted
                 old_releases = session.execute(
                     text("SELECT COUNT(*) FROM releases WHERE created_at < :cutoff"),
-                    {"cutoff": cutoff_date}
+                    {"cutoff": cutoff_date},
                 ).scalar()
-                
+
                 if old_releases > 0:
                     # Count related records
                     related_containers = session.execute(
-                        text("""
+                        text(
+                            """
                         SELECT COUNT(*) FROM containers c
                         JOIN releases r ON c.release_id = r.id
                         WHERE r.created_at < :cutoff
-                        """),
-                        {"cutoff": cutoff_date}
+                        """
+                        ),
+                        {"cutoff": cutoff_date},
                     ).scalar()
-                    
+
                     related_vulnerabilities = session.execute(
-                        text("""
+                        text(
+                            """
                         SELECT COUNT(*) FROM vulnerabilities v
                         JOIN containers c ON v.container_id = c.id
                         JOIN releases r ON c.release_id = r.id
                         WHERE r.created_at < :cutoff
-                        """),
-                        {"cutoff": cutoff_date}
+                        """
+                        ),
+                        {"cutoff": cutoff_date},
                     ).scalar()
-                    
+
                     related_packages = session.execute(
-                        text("""
+                        text(
+                            """
                         SELECT COUNT(*) FROM packages p
                         JOIN containers c ON p.container_id = c.id
                         JOIN releases r ON c.release_id = r.id
                         WHERE r.created_at < :cutoff
-                        """),
-                        {"cutoff": cutoff_date}
+                        """
+                        ),
+                        {"cutoff": cutoff_date},
                     ).scalar()
 
                     # Delete old releases (cascading will handle related records)
                     deleted_releases = repo.delete_old_releases(days_to_keep)
-                    
-                    cleanup_stats.update({
-                        "releases_deleted": deleted_releases,
-                        "containers_deleted": related_containers,
-                        "vulnerabilities_deleted": related_vulnerabilities,
-                        "packages_deleted": related_packages,
-                    })
+
+                    cleanup_stats.update(
+                        {
+                            "releases_deleted": deleted_releases,
+                            "containers_deleted": related_containers,
+                            "vulnerabilities_deleted": related_vulnerabilities,
+                            "packages_deleted": related_packages,
+                        }
+                    )
 
                 logger.info(f"Cleanup completed: {cleanup_stats}")
 
@@ -219,14 +233,14 @@ class DatabaseManager:
 
     def validate_schema(self) -> bool:
         """Validate that the database schema matches the expected structure.
-        
+
         Returns:
             True if schema is valid, False otherwise
         """
         try:
             # Get expected tables from models
             expected_tables = set(Base.metadata.tables.keys())
-            
+
             with self.engine.connect() as conn:
                 # Get actual tables from database
                 tables_query = """
@@ -240,12 +254,12 @@ class DatabaseManager:
                 if expected_tables != actual_tables:
                     missing = expected_tables - actual_tables
                     extra = actual_tables - expected_tables
-                    
+
                     if missing:
                         logger.error(f"Missing tables: {missing}")
                     if extra:
                         logger.warning(f"Extra tables: {extra}")
-                    
+
                     return False
 
                 logger.info("Database schema validation passed")
@@ -258,14 +272,14 @@ class DatabaseManager:
 
 def get_database_manager(database_url: Optional[str] = None) -> DatabaseManager:
     """Get a database manager instance.
-    
+
     Args:
         database_url: Optional database URL, defaults to SQLite
-        
+
     Returns:
         DatabaseManager instance
     """
     if database_url is None:
         database_url = "sqlite:///security_manifest.db"
-    
+
     return DatabaseManager(database_url)

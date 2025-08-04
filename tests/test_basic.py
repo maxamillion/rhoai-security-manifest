@@ -1,6 +1,5 @@
 """Basic test to verify test setup works."""
 
-import pytest
 
 
 def test_basic_functionality():
@@ -11,4 +10,5 @@ def test_basic_functionality():
 def test_package_import():
     """Test that the main package can be imported."""
     import rhoai_security_manifest
+
     assert rhoai_security_manifest is not None

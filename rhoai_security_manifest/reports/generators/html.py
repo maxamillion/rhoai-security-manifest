@@ -2,8 +2,9 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
-from jinja2 import Environment, BaseLoader
+from typing import Any, Dict
+
+from jinja2 import BaseLoader, Environment
 
 from ...utils.logging import get_logger
 
@@ -12,88 +13,88 @@ logger = get_logger("reports.generators.html")
 
 class HTMLReportGenerator:
     """Generate HTML reports with interactive features."""
-    
+
     def __init__(self):
         """Initialize the HTML report generator."""
         self.env = Environment(loader=BaseLoader())
-        
+
         # Add custom filters
-        self.env.filters['datetime'] = self._format_datetime
-        self.env.filters['severity_color'] = self._get_severity_color
-        self.env.filters['grade_color'] = self._get_grade_color
-    
+        self.env.filters["datetime"] = self._format_datetime
+        self.env.filters["severity_color"] = self._get_severity_color
+        self.env.filters["grade_color"] = self._get_grade_color
+
     def generate_report(self, report_data: Dict[str, Any], output_path: Path) -> None:
         """Generate comprehensive HTML security report.
-        
+
         Args:
             report_data: Report data dictionary
             output_path: Output file path
         """
         logger.info(f"Generating HTML report: {output_path}")
-        
+
         template = self.env.from_string(self._get_html_template())
-        
+
         # Enhance report data with HTML-specific formatting
         enhanced_data = self._enhance_report_data(report_data)
-        
+
         # Render template
         html_content = template.render(**enhanced_data)
-        
+
         # Write to file
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             f.write(html_content)
-        
+
         logger.info(f"HTML report generated successfully: {output_path}")
-    
+
     def _enhance_report_data(self, report_data: Dict[str, Any]) -> Dict[str, Any]:
         """Enhance report data with HTML-specific information."""
         enhanced = report_data.copy()
-        
+
         # Add severity totals
         severity_totals = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
         for container in enhanced["containers"]:
             vulns = container.get("vulnerabilities", {})
             for severity in severity_totals:
                 severity_totals[severity] += vulns.get(severity, 0)
-        
+
         enhanced["severity_totals"] = severity_totals
-        
+
         # Add grade statistics
         grade_stats = {}
         for container in enhanced["containers"]:
             grade = container.get("security_grade", "Unknown")
             grade_stats[grade] = grade_stats.get(grade, 0) + 1
-        
+
         enhanced["grade_stats"] = grade_stats
-        
+
         # Sort containers by security score
         enhanced["containers"] = sorted(
             enhanced["containers"],
             key=lambda x: x.get("security_score", 0),
-            reverse=True
+            reverse=True,
         )
-        
+
         return enhanced
-    
+
     def _format_datetime(self, value: str) -> str:
         """Format datetime string for display."""
         try:
-            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
-            return dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
         except (ValueError, AttributeError):
             return value
-    
+
     def _get_severity_color(self, severity: str) -> str:
         """Get CSS color class for vulnerability severity."""
         color_map = {
             "Critical": "danger",
-            "High": "warning", 
+            "High": "warning",
             "Medium": "info",
             "Low": "secondary",
-            "Unknown": "light"
+            "Unknown": "light",
         }
         return color_map.get(severity, "light")
-    
+
     def _get_grade_color(self, grade: str) -> str:
         """Get CSS color class for security grade."""
         color_map = {
@@ -102,10 +103,10 @@ class HTMLReportGenerator:
             "C": "warning",
             "D": "orange",
             "F": "danger",
-            "Unknown": "light"
+            "Unknown": "light",
         }
         return color_map.get(grade, "light")
-    
+
     def _get_html_template(self) -> str:
         """Get the HTML template string."""
         return """

@@ -17,11 +17,7 @@ class ReleaseRepository:
 
     def get_by_version(self, version: str) -> Optional[Release]:
         """Get a release by version string."""
-        return (
-            self.session.query(Release)
-            .filter(Release.version == version)
-            .first()
-        )
+        return self.session.query(Release).filter(Release.version == version).first()
 
     def create(self, version: str) -> Release:
         """Create a new release."""
@@ -32,11 +28,7 @@ class ReleaseRepository:
 
     def get_all(self) -> List[Release]:
         """Get all releases ordered by version."""
-        return (
-            self.session.query(Release)
-            .order_by(desc(Release.created_at))
-            .all()
-        )
+        return self.session.query(Release).order_by(desc(Release.created_at)).all()
 
     def update_container_count(self, release_id: int, count: int) -> None:
         """Update the container count for a release."""
@@ -48,10 +40,10 @@ class ReleaseRepository:
 
     def delete_old_releases(self, days_to_keep: int = 180) -> int:
         """Delete releases older than specified days.
-        
+
         Args:
             days_to_keep: Number of days to retain data
-            
+
         Returns:
             Number of releases deleted
         """
@@ -80,16 +72,13 @@ class ContainerRepository:
             .all()
         )
 
-    def get_by_name_and_release(self, name: str, release_id: int) -> Optional[Container]:
+    def get_by_name_and_release(
+        self, name: str, release_id: int
+    ) -> Optional[Container]:
         """Get a container by name and release."""
         return (
             self.session.query(Container)
-            .filter(
-                and_(
-                    Container.name == name,
-                    Container.release_id == release_id
-                )
-            )
+            .filter(and_(Container.name == name, Container.release_id == release_id))
             .first()
         )
 
@@ -116,9 +105,7 @@ class ContainerRepository:
     def update_security_grade(self, container_id: int, grade: str) -> None:
         """Update the security grade for a container."""
         container = (
-            self.session.query(Container)
-            .filter(Container.id == container_id)
-            .first()
+            self.session.query(Container).filter(Container.id == container_id).first()
         )
         if container:
             container.security_grade = grade
@@ -129,8 +116,7 @@ class ContainerRepository:
         """Get container count by security grade for a release."""
         results = (
             self.session.query(
-                Container.security_grade,
-                func.count(Container.id).label('count')
+                Container.security_grade, func.count(Container.id).label("count")
             )
             .filter(Container.release_id == release_id)
             .group_by(Container.security_grade)
@@ -185,7 +171,7 @@ class VulnerabilityRepository:
             .filter(
                 and_(
                     Vulnerability.container_id == container_id,
-                    Vulnerability.severity == severity
+                    Vulnerability.severity == severity,
                 )
             )
             .all()
@@ -195,8 +181,7 @@ class VulnerabilityRepository:
         """Get vulnerability count by severity for a container."""
         results = (
             self.session.query(
-                Vulnerability.severity,
-                func.count(Vulnerability.id).label('count')
+                Vulnerability.severity, func.count(Vulnerability.id).label("count")
             )
             .filter(Vulnerability.container_id == container_id)
             .group_by(Vulnerability.severity)
@@ -206,11 +191,11 @@ class VulnerabilityRepository:
 
     def mark_as_resolved(self, container_id: int, cve_ids: List[str]) -> int:
         """Mark vulnerabilities as resolved.
-        
+
         Args:
             container_id: Container ID
             cve_ids: List of CVE IDs to mark as resolved
-            
+
         Returns:
             Number of vulnerabilities updated
         """
@@ -219,7 +204,7 @@ class VulnerabilityRepository:
             .filter(
                 and_(
                     Vulnerability.container_id == container_id,
-                    Vulnerability.cve_id.in_(cve_ids)
+                    Vulnerability.cve_id.in_(cve_ids),
                 )
             )
             .update({"status": "resolved"})
@@ -228,9 +213,7 @@ class VulnerabilityRepository:
         return updated_count
 
     def get_new_vulnerabilities(
-        self, 
-        container_id: int, 
-        since_date: datetime
+        self, container_id: int, since_date: datetime
     ) -> List[Vulnerability]:
         """Get new vulnerabilities since a specific date."""
         return (
@@ -239,7 +222,7 @@ class VulnerabilityRepository:
                 and_(
                     Vulnerability.container_id == container_id,
                     Vulnerability.first_seen >= since_date,
-                    Vulnerability.status == "new"
+                    Vulnerability.status == "new",
                 )
             )
             .all()
@@ -281,11 +264,7 @@ class PackageRepository:
 
     def update_vulnerability_count(self, package_id: int, count: int) -> None:
         """Update vulnerability count for a package."""
-        package = (
-            self.session.query(Package)
-            .filter(Package.id == package_id)
-            .first()
-        )
+        package = self.session.query(Package).filter(Package.id == package_id).first()
         if package:
             package.vulnerability_count = count
             self.session.commit()
@@ -297,7 +276,7 @@ class PackageRepository:
             .filter(
                 and_(
                     Package.container_id == container_id,
-                    Package.vulnerability_count > 0
+                    Package.vulnerability_count > 0,
                 )
             )
             .order_by(desc(Package.vulnerability_count))

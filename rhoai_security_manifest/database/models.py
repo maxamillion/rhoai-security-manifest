@@ -126,7 +126,9 @@ class Package(Base):
     vulnerability_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # Relationships
-    container: Mapped["Container"] = relationship("Container", back_populates="packages")
+    container: Mapped["Container"] = relationship(
+        "Container", back_populates="packages"
+    )
 
     def __repr__(self) -> str:
         return f"<Package(id={self.id}, name='{self.name}', version='{self.version}')>"
@@ -138,10 +140,10 @@ SessionLocal = sessionmaker()
 
 def create_database_engine(database_url: str = "sqlite:///security_manifest.db"):
     """Create and configure the database engine.
-    
+
     Args:
         database_url: Database connection URL
-        
+
     Returns:
         SQLAlchemy engine instance
     """
@@ -151,16 +153,16 @@ def create_database_engine(database_url: str = "sqlite:///security_manifest.db")
         pool_pre_ping=True,
         connect_args={"check_same_thread": False} if "sqlite" in database_url else {},
     )
-    
+
     # Configure session factory
     SessionLocal.configure(bind=engine)
-    
+
     return engine
 
 
 def create_tables(engine):
     """Create all database tables.
-    
+
     Args:
         engine: SQLAlchemy engine instance
     """
