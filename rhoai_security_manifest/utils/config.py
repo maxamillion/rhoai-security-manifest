@@ -92,12 +92,35 @@ class DiscoveryConfig(BaseModel):
     use_product_listings: bool = Field(
         default=True, description="Enable Product Listings API for container discovery"
     )
+    discovery_strategy: str = Field(
+        default="product_listings_primary",
+        description="Discovery strategy: 'product_listings_primary', 'targeted_api', or 'broad_search'",
+    )
     product_listings_cache_ttl: int = Field(
         default=3600,
         ge=300,
         le=86400,
         description="Product Listings cache TTL in seconds",
     )
+    max_api_pages: int = Field(
+        default=100,
+        ge=10,
+        le=500,
+        description="Maximum pages to fetch during broad search",
+    )
+
+    @validator("discovery_strategy")
+    def validate_discovery_strategy(cls, v):
+        """Validate discovery strategy value."""
+        allowed_strategies = [
+            "product_listings_primary",
+            "targeted_api",
+            "broad_search",
+        ]
+        if v not in allowed_strategies:
+            raise ValueError(f"discovery_strategy must be one of {allowed_strategies}")
+        return v
+
     fallback_to_manual_config: bool = Field(
         default=True,
         description="Fallback to manual configuration if Product Listings API fails",

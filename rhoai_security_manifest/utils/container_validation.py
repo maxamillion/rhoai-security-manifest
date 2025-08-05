@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import httpx
 import yaml
@@ -41,7 +41,7 @@ class ContainerValidator:
 
     async def validate_container_config(
         self, config_path: Optional[Path] = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Validate container configuration file.
 
         Args:
@@ -75,8 +75,8 @@ class ContainerValidator:
         return await self._validate_config_structure(config, config_path)
 
     async def _validate_config_structure(
-        self, config: Dict[str, Any], config_path: Path
-    ) -> Dict[str, Any]:
+        self, config: dict[str, Any], config_path: Path
+    ) -> dict[str, Any]:
         """Validate the structure and content of the configuration."""
         issues = []
         statistics = {}
@@ -165,8 +165,8 @@ class ContainerValidator:
         }
 
     async def check_container_accessibility(
-        self, containers: List[Dict[str, str]], max_concurrent: int = 5
-    ) -> Dict[str, Any]:
+        self, containers: list[dict[str, str]], max_concurrent: int = 5
+    ) -> dict[str, Any]:
         """Check if containers are accessible in the registry.
 
         Args:
@@ -185,7 +185,7 @@ class ContainerValidator:
             "details": [],
         }
 
-        async def check_single_container(container: Dict[str, str]) -> Dict[str, Any]:
+        async def check_single_container(container: dict[str, str]) -> dict[str, Any]:
             async with semaphore:
                 namespace = container.get("namespace", "")
                 repository = container.get("repository", "")
@@ -238,7 +238,7 @@ class ContainerValidator:
 
         return results
 
-    def print_validation_report(self, validation_result: Dict[str, Any]) -> None:
+    def print_validation_report(self, validation_result: dict[str, Any]) -> None:
         """Print a formatted validation report."""
         console.print(
             "\n🔍 [bold blue]Container Configuration Validation Report[/bold blue]\n"
@@ -301,7 +301,7 @@ class ContainerValidator:
             for issue in validation_result["issues"]:
                 console.print(f"   • {issue}")
 
-    def print_accessibility_report(self, accessibility_result: Dict[str, Any]) -> None:
+    def print_accessibility_report(self, accessibility_result: dict[str, Any]) -> None:
         """Print a formatted accessibility report."""
         console.print("\n🌐 [bold blue]Container Accessibility Report[/bold blue]\n")
 
@@ -354,7 +354,7 @@ async def validate_rhoai_containers(
     config_path: Optional[Path] = None,
     check_accessibility: bool = False,
     release_filter: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Main validation function for RHOAI containers.
 
     Args:

@@ -212,16 +212,42 @@ class SecurityAnalysisOrchestrator:
                     self.config.discovery, "use_product_listings", True
                 )
 
+            discovery_strategy = getattr(
+                self.config.discovery, "discovery_strategy", "product_listings_primary"
+            )
+
             containers = await self.catalog_client.discover_rhoai_containers(
                 release_version,
                 container_filter,
                 manual_containers,
                 hybrid_discovery,
                 use_product_listings,
+                discovery_strategy,
             )
             return containers
         except Exception as e:
             logger.error(f"Container discovery failed: {e}")
+
+            # Provide helpful error context
+            if "401" in str(e) or "Authentication" in str(e):
+                logger.error(
+                    "API authentication failed. The Red Hat Container Catalog may require credentials."
+                )
+                logger.info(
+                    "Consider using --offline mode if you have cached data, or configure API authentication."
+                )
+            elif "403" in str(e) or "forbidden" in str(e).lower():
+                logger.error(
+                    "API access forbidden. Check your Red Hat Container Catalog permissions."
+                )
+            elif "404" in str(e):
+                logger.warning(
+                    "Container endpoints not found. The API structure may have changed."
+                )
+                logger.info(
+                    "Trying to use manual container configuration from config/containers.yaml"
+                )
+
             if not offline_mode:
                 # Fallback to cached data
                 logger.info("Falling back to cached container data")

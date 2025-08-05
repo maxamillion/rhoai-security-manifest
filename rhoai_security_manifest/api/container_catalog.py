@@ -69,6 +69,9 @@ class ContainerCatalogClient:
         self._failed_endpoints = set()
         self._working_endpoints = set()
 
+        # Cache for API responses to avoid redundant calls
+        self._response_cache = {}
+
         # Configure HTTP client
         self._client = httpx.AsyncClient(
             timeout=timeout, limits=httpx.Limits(max_connections=max_concurrent * 2)
@@ -167,7 +170,8 @@ class ContainerCatalogClient:
                 if e.response.status_code == 404:
                     # Mark this endpoint as failed
                     self._failed_endpoints.add(endpoint)
-                    logger.debug(f"Endpoint 404 (added to failed list): {endpoint}")
+                    # Only log at debug level for expected 404s during endpoint exploration
+                    logger.debug(f"Endpoint exploration 404 (expected): {endpoint}")
                     continue
                 # For other errors, log but continue trying
                 logger.debug(f"Error with endpoint {endpoint}: {e}")
@@ -273,6 +277,140 @@ class ContainerCatalogClient:
                     return None
                 raise
 
+    async def _targeted_api_discovery(
+        self,
+        container_repos: list,
+        release_version: str,
+        filter_names: Optional[list[str]] = None,
+    ) -> list[ContainerImage]:
+        """Perform targeted API discovery for specific container repositories.
+
+        Args:
+            container_repos: List of container repositories from Product Listings
+            release_version: Target release version
+            filter_names: Optional list of container names to filter by
+
+        Returns:
+            List of verified container images from the API
+        """
+        logger.info(
+            f"Starting targeted API discovery for {len(container_repos)} containers"
+        )
+
+        verified_containers = []
+        verification_tasks = []
+
+        # Create targeted verification tasks
+        for repo in container_repos:
+            # Apply name filter if specified
+            if filter_names and not any(
+                name.lower() in repo.repository.lower() for name in filter_names
+            ):
+                continue
+
+            # Create verification task for this specific container
+            verification_tasks.append(
+                self._verify_container_exists(repo, release_version)
+            )
+
+        if not verification_tasks:
+            logger.info("No containers to verify after filtering")
+            return verified_containers
+
+        logger.info(
+            f"Verifying {len(verification_tasks)} containers via targeted API calls"
+        )
+
+        # Execute verification tasks in parallel with semaphore control
+        results = await asyncio.gather(*verification_tasks, return_exceptions=True)
+
+        # Process results
+        for result in results:
+            if isinstance(result, Exception):
+                logger.debug(f"Verification task failed: {result}")
+                continue
+            if result:  # Successfully verified container
+                verified_containers.append(result)
+
+        logger.info(
+            f"Successfully verified {len(verified_containers)} containers via API"
+        )
+        return verified_containers
+
+    async def _verify_container_exists(
+        self, repo, release_version: str
+    ) -> Optional[ContainerImage]:
+        """Verify a specific container exists via targeted API calls.
+
+        Args:
+            repo: Container repository info from Product Listings
+            release_version: Target release version
+
+        Returns:
+            ContainerImage if found, None otherwise
+        """
+        async with self._semaphore:
+            # Try multiple targeted endpoints for this specific container
+            container_id = f"{repo.namespace}/{repo.repository}"
+            cache_key = f"verify_{container_id}_{release_version}"
+
+            # Check cache first
+            if cache_key in self._response_cache:
+                cached_result = self._response_cache[cache_key]
+                if cached_result:
+                    logger.debug(f"Using cached result for {container_id}")
+                    return cached_result
+                return None
+
+            # Try targeted endpoints
+            endpoint_patterns = [
+                f"repositories/{repo.namespace}/{repo.repository}",
+                f"repositories/registry/registry.redhat.io/{repo.namespace}/{repo.repository}",
+                f"repositories/id/{repo.namespace}-{repo.repository}",
+            ]
+
+            for endpoint in endpoint_patterns:
+                try:
+                    url = urljoin(self.base_url, endpoint)
+
+                    # Check if we've already tried this endpoint and it failed
+                    if endpoint in self._failed_endpoints:
+                        continue
+
+                    response = await self._client.request("GET", url)
+
+                    if response.status_code == 200:
+                        data = response.json()
+
+                        # Parse the container data
+                        container = self._parse_container_data(data)
+
+                        # Verify it matches our release version
+                        if self._is_release_match(container, release_version):
+                            # Cache the successful result
+                            self._response_cache[cache_key] = container
+                            self._working_endpoints.add(endpoint)
+
+                            logger.debug(f"Verified container via API: {container_id}")
+                            return container
+                        else:
+                            logger.debug(
+                                f"Container {container_id} found but version mismatch"
+                            )
+
+                    elif response.status_code == 404:
+                        # Mark this specific endpoint as failed
+                        self._failed_endpoints.add(endpoint)
+
+                except Exception as e:
+                    logger.debug(f"Error verifying {container_id} via {endpoint}: {e}")
+                    continue
+
+            # Cache negative result to avoid repeated attempts
+            self._response_cache[cache_key] = None
+            logger.debug(f"Could not verify container via API: {container_id}")
+            return None
+
     async def discover_rhoai_containers(
         self,
         release_version: str,
@@ -280,6 +418,7 @@ class ContainerCatalogClient:
         manual_containers: Optional[list[dict[str, str]]] = None,
         hybrid_discovery: bool = True,
         use_product_listings: bool = True,
+        discovery_strategy: str = "product_listings_primary",
     ) -> list[ContainerImage]:
         """Discover all RHOAI containers for a specific release.
 
@@ -289,17 +428,24 @@ class ContainerCatalogClient:
             manual_containers: Optional list of manually specified containers
             hybrid_discovery: Whether to combine manual + API discovery (default: True)
             use_product_listings: Whether to use Product Listings API for discovery (default: True)
+            discovery_strategy: Discovery strategy to use:
+                - "product_listings_primary": Use Product Listings as primary source (recommended)
+                - "targeted_api": Use targeted API verification for Product Listings containers
+                - "broad_search": Use original broad search approach (legacy)
 
         Returns:
             List of container images for the release
         """
-        logger.info(f"Discovering RHOAI containers for release {release_version}")
+        logger.info(
+            f"Discovering RHOAI containers for release {release_version} using strategy: {discovery_strategy}"
+        )
 
         all_containers = []
         seen_digests = set()
         manual_count = 0
         api_count = 0
         product_listings_count = 0
+        targeted_api_count = 0
 
         # Phase 0: Product Listings API Discovery (if enabled and client available)
         if use_product_listings and self._product_listings_client:
@@ -316,49 +462,105 @@ class ContainerCatalogClient:
                         )
                     )
 
-                    # Convert ProductListing containers to ContainerImage objects
-                    for repo in container_repos:
-                        # Apply name filter if specified
-                        if filter_names and not any(
-                            name.lower() in repo.repository.lower()
-                            for name in filter_names
-                        ):
-                            logger.debug(
-                                f"Skipping container {repo.repository} - doesn't match filter"
+                    if discovery_strategy == "product_listings_primary":
+                        # Convert ProductListing containers to ContainerImage objects directly
+                        for repo in container_repos:
+                            # Apply name filter if specified
+                            if filter_names and not any(
+                                name.lower() in repo.repository.lower()
+                                for name in filter_names
+                            ):
+                                logger.debug(
+                                    f"Skipping container {repo.repository} - doesn't match filter"
+                                )
+                                continue
+
+                            # Use namespace/repository format for proper API queries
+                            image_id = f"{repo.namespace}/{repo.repository}"
+                            container = ContainerImage(
+                                name=repo.repository,
+                                registry_url=f"{repo.registry}/{repo.namespace}/{repo.repository}",
+                                digest=image_id,  # Use proper namespace/repository format
+                                tag=release_version,
+                                created_at=datetime.now(),
+                                architecture="x86_64",
+                                labels={
+                                    "source": "product_listings",
+                                    "bundle": repo.source_bundle or "",
+                                    "ocp_versions": ",".join(repo.ocp_versions),
+                                    "categories": ",".join(repo.categories),
+                                },
                             )
-                            continue
 
-                        container = ContainerImage(
-                            name=repo.repository,
-                            registry_url=f"{repo.registry}/{repo.namespace}/{repo.repository}",
-                            digest=f"product-listings-{repo.namespace}-{repo.repository}",
-                            tag=release_version,
-                            created_at=datetime.now(),
-                            architecture="x86_64",
-                            labels={
-                                "source": "product_listings",
-                                "bundle": repo.source_bundle or "",
-                                "ocp_versions": ",".join(repo.ocp_versions),
-                                "categories": ",".join(repo.categories),
-                            },
-                        )
+                            all_containers.append(container)
+                            seen_digests.add(container.digest)
+                            product_listings_count += 1
+                            logger.debug(
+                                f"Added Product Listings container: {container.registry_url}"
+                            )
 
-                        all_containers.append(container)
-                        seen_digests.add(container.digest)
-                        product_listings_count += 1
-                        logger.debug(
-                            f"Added Product Listings container: {container.registry_url}"
-                        )
-
-                    logger.info(
-                        f"Successfully discovered {product_listings_count} containers via Product Listings API"
-                    )
-
-                    # If we found containers via Product Listings and hybrid discovery is disabled,
-                    # return only these containers
-                    if product_listings_count > 0 and not hybrid_discovery:
                         logger.info(
-                            f"Product Listings discovery complete (hybrid disabled): {product_listings_count} containers"
+                            f"Successfully discovered {product_listings_count} containers via Product Listings API"
+                        )
+
+                    elif discovery_strategy == "targeted_api":
+                        # Use targeted API discovery to verify Product Listings containers
+                        logger.info(
+                            "Using targeted API discovery to verify Product Listings containers"
+                        )
+                        verified_containers = await self._targeted_api_discovery(
+                            container_repos, release_version, filter_names
+                        )
+
+                        # Use verified containers or fall back to Product Listings data
+                        if verified_containers:
+                            all_containers.extend(verified_containers)
+                            for container in verified_containers:
+                                seen_digests.add(container.digest)
+                            targeted_api_count = len(verified_containers)
+                            logger.info(
+                                f"Successfully verified {targeted_api_count} containers via targeted API"
+                            )
+                        else:
+                            # Fall back to Product Listings data if API verification fails
+                            logger.warning(
+                                "Targeted API verification failed, falling back to Product Listings data"
+                            )
+                            for repo in container_repos:
+                                if filter_names and not any(
+                                    name.lower() in repo.repository.lower()
+                                    for name in filter_names
+                                ):
+                                    continue
+
+                                # Use namespace/repository format for proper API queries
+                                image_id = f"{repo.namespace}/{repo.repository}"
+                                container = ContainerImage(
+                                    name=repo.repository,
+                                    registry_url=f"{repo.registry}/{repo.namespace}/{repo.repository}",
+                                    digest=image_id,  # Use proper namespace/repository format
+                                    tag=release_version,
+                                    created_at=datetime.now(),
+                                    architecture="x86_64",
+                                    labels={
+                                        "source": "product_listings_fallback",
+                                        "bundle": repo.source_bundle or "",
+                                        "ocp_versions": ",".join(repo.ocp_versions),
+                                        "categories": ",".join(repo.categories),
+                                    },
+                                )
+
+                                all_containers.append(container)
+                                seen_digests.add(container.digest)
+                                product_listings_count += 1
+
+                    # If we found containers and hybrid discovery is disabled, return them
+                    if (
+                        product_listings_count > 0 or targeted_api_count > 0
+                    ) and not hybrid_discovery:
+                        total_found = product_listings_count + targeted_api_count
+                        logger.info(
+                            f"Discovery complete (hybrid disabled): {total_found} containers"
                         )
                         return all_containers
                 else:
@@ -386,10 +588,12 @@ class ContainerCatalogClient:
                     repository = container_spec.get("repository", "")
                     registry = container_spec.get("registry", "registry.redhat.io")
 
+                    # Use namespace/repository format for consistency
+                    image_id = f"{namespace}/{repository}" if namespace else repository
                     container = ContainerImage(
                         name=repository,
                         registry_url=f"{registry}/{namespace}/{repository}",
-                        digest=f"manual-{namespace}-{repository}",
+                        digest=f"manual-{image_id}",  # Keep manual prefix but use proper format
                         tag=release_version,
                         created_at=datetime.now(),
                         architecture="x86_64",
@@ -425,137 +629,165 @@ class ContainerCatalogClient:
                 return all_containers
 
         # Phase 2: API Discovery - Enhanced search patterns for comprehensive coverage
-        logger.info(
-            f"Starting API discovery for release {release_version} (hybrid_discovery={hybrid_discovery})"
-        )
+        # Only perform broad search if explicitly requested or as fallback
+        if discovery_strategy == "broad_search" or (
+            discovery_strategy in ["product_listings_primary", "targeted_api"]
+            and hybrid_discovery
+            and product_listings_count == 0
+            and targeted_api_count == 0
+        ):
+            logger.info(
+                f"Starting broad API discovery for release {release_version} (strategy={discovery_strategy}, hybrid_discovery={hybrid_discovery})"
+            )
 
-        # Comprehensive search patterns covering all known RHOAI/OpenShift AI variations
-        search_patterns = [
-            # Core product names
-            "rhoai",
-            "openshift-ai",
-            "openshift ai",
-            "rhods",  # Legacy Red Hat OpenShift Data Science
-            "red hat openshift ai",
-            "openshift data science",
-            # Component-specific patterns
-            "odh",  # Open Data Hub components
-            "kubeflow",
-            "modelmesh",
-            "kserve",
-            "trustyai",
-            "codeflare",
-            "ray",
-            "notebook",
-            "workbench",
-            "pytorch",
-            "tensorflow",
-            "triton",
-            "openvino",
-            "habana",
-            "intel",
-            # Operator patterns
-            "rhods-operator",
-            "data-science",
-            "ml-pipelines",
-            "pipelines",
-            # Jupyter/notebook patterns
-            "jupyter",
-            "notebook-controller",
-            "workbench-images",
-            # Additional infrastructure
-            "dashboard",
-            "oauth-proxy",
-            "rest-proxy",
-        ]
+            # Comprehensive search patterns covering all known RHOAI/OpenShift AI variations
+            search_patterns = [
+                # Core product names
+                "rhoai",
+                "openshift-ai",
+                "openshift ai",
+                "rhods",  # Legacy Red Hat OpenShift Data Science
+                "red hat openshift ai",
+                "openshift data science",
+                # Component-specific patterns
+                "odh",  # Open Data Hub components
+                "kubeflow",
+                "modelmesh",
+                "kserve",
+                "trustyai",
+                "codeflare",
+                "ray",
+                "notebook",
+                "workbench",
+                "pytorch",
+                "tensorflow",
+                "triton",
+                "openvino",
+                "habana",
+                "intel",
+                # Operator patterns
+                "rhods-operator",
+                "data-science",
+                "ml-pipelines",
+                "pipelines",
+                # Jupyter/notebook patterns
+                "jupyter",
+                "notebook-controller",
+                "workbench-images",
+                # Additional infrastructure
+                "dashboard",
+                "oauth-proxy",
+                "rest-proxy",
+            ]
 
-        # Namespace patterns to search within
-        namespace_patterns = ["rhoai", "openshift-ai", "rhods", "odh", "redhat-ods"]
+            # Namespace patterns to search within - including alternative namespaces
+            namespace_patterns = [
+                "rhoai",
+                "openshift-ai",
+                "rhods",
+                "odh",
+                "redhat-ods",
+                "ubi8",
+                "rhel8",
+                "openshift4",
+                "registry.redhat.io",
+                "redhat",
+            ]
 
-        for pattern in search_patterns:
-            try:
-                page = 1
-                consecutive_empty_pages = 0
-                pattern_containers = 0
+            for pattern in search_patterns:
+                try:
+                    page = 1
+                    consecutive_empty_pages = 0
+                    pattern_containers = 0
 
-                while (
-                    consecutive_empty_pages < 3
-                ):  # Stop after 3 consecutive empty result pages
-                    result = await self.search_containers(
-                        query=pattern,
-                        page=page,
-                        page_size=100,
-                        filter_params={"vendor": "redhat"},
-                    )
+                    while (
+                        consecutive_empty_pages < 3
+                    ):  # Stop after 3 consecutive empty result pages
+                        result = await self.search_containers(
+                            query=pattern,
+                            page=page,
+                            page_size=100,
+                            filter_params={"vendor": "redhat"},
+                        )
 
-                    # Count how many containers we found on this page
-                    page_containers = 0
+                        # Count how many containers we found on this page
+                        page_containers = 0
+
+                        logger.debug(
+                            f"Pattern '{pattern}' Page {page}: Found {len(result.images)} containers"
+                        )
+
+                        # Filter containers
+                        for container in result.images:
+                            # Avoid duplicates (check both digest and registry_url)
+                            container_key = (
+                                f"{container.digest}-{container.registry_url}"
+                            )
+                            if (
+                                container.digest in seen_digests
+                                or container_key in seen_digests
+                            ):
+                                continue
+
+                            # Apply name filter if specified
+                            if filter_names and not any(
+                                name.lower() in container.name.lower()
+                                for name in filter_names
+                            ):
+                                continue
+
+                            # Enhanced matching: check if container is RHOAI-related
+                            if self._is_rhoai_container(container, namespace_patterns):
+                                # Verify this is actually for the requested release
+                                if self._is_release_match(container, release_version):
+                                    logger.info(
+                                        f"Found API container: {container.name}"
+                                    )
+                                    all_containers.append(container)
+                                    seen_digests.add(container.digest)
+                                    seen_digests.add(container_key)
+                                    page_containers += 1
+                                    pattern_containers += 1
+                                    api_count += 1
+
+                        # Track empty pages
+                        if page_containers == 0:
+                            consecutive_empty_pages += 1
+                        else:
+                            consecutive_empty_pages = 0
+
+                        # Check if we've reached the end of results
+                        if result.total > 0 and page * result.page_size >= result.total:
+                            break
+
+                        page += 1
+
+                        # Safety limit to prevent infinite loops
+                        # Use configurable page limit
+                        max_pages = getattr(self, "_max_api_pages", 100)
+                        if page > max_pages:
+                            logger.warning(
+                                f"Reached page limit ({max_pages}) for pattern '{pattern}'"
+                            )
+                            break
 
                     logger.debug(
-                        f"Pattern '{pattern}' Page {page}: Found {len(result.images)} containers"
+                        f"Pattern '{pattern}' found {pattern_containers} new containers"
                     )
 
-                    # Filter containers
-                    for container in result.images:
-                        # Avoid duplicates (check both digest and registry_url)
-                        container_key = f"{container.digest}-{container.registry_url}"
-                        if (
-                            container.digest in seen_digests
-                            or container_key in seen_digests
-                        ):
-                            continue
-
-                        # Apply name filter if specified
-                        if filter_names and not any(
-                            name.lower() in container.name.lower()
-                            for name in filter_names
-                        ):
-                            continue
-
-                        # Enhanced matching: check if container is RHOAI-related
-                        if self._is_rhoai_container(container, namespace_patterns):
-                            # Verify this is actually for the requested release
-                            if self._is_release_match(container, release_version):
-                                logger.info(f"Found API container: {container.name}")
-                                all_containers.append(container)
-                                seen_digests.add(container.digest)
-                                seen_digests.add(container_key)
-                                page_containers += 1
-                                pattern_containers += 1
-                                api_count += 1
-
-                    # Track empty pages
-                    if page_containers == 0:
-                        consecutive_empty_pages += 1
-                    else:
-                        consecutive_empty_pages = 0
-
-                    # Check if we've reached the end of results
-                    if result.total > 0 and page * result.page_size >= result.total:
-                        break
-
-                    page += 1
-
-                    # Safety limit to prevent infinite loops
-                    # TODO: Make this configurable via Config
-                    if page > 100:  # This could be made configurable in the future
-                        logger.warning(f"Reached page limit for pattern '{pattern}'")
-                        break
-
-                logger.debug(
-                    f"Pattern '{pattern}' found {pattern_containers} new containers"
-                )
-
-            except Exception as e:
-                logger.warning(f"Failed to search with pattern '{pattern}': {e}")
-                continue
+                except Exception as e:
+                    logger.warning(f"Failed to search with pattern '{pattern}': {e}")
+                    continue
 
         # Summary logging
         total_containers = len(all_containers)
-        logger.info(f"Discovery complete for release {release_version}:")
+        logger.info(
+            f"Discovery complete for release {release_version} (strategy: {discovery_strategy}):"
+        )
         logger.info(f"  Product Listings API: {product_listings_count}")
+        logger.info(f"  Targeted API verified: {targeted_api_count}")
         logger.info(f"  Manual containers: {manual_count}")
-        logger.info(f"  Search API discovered: {api_count}")
+        logger.info(f"  Broad search API discovered: {api_count}")
         logger.info(f"  Total containers: {total_containers}")
 
         if total_containers == 0:
@@ -592,30 +824,44 @@ class ContainerCatalogClient:
                 raise
 
     async def get_image_by_id(self, image_id: str) -> Optional[dict[str, Any]]:
-        """Get detailed image information by image ID using GraphQL endpoint.
+        """Get detailed image information by image ID.
 
         Args:
-            image_id: Image identifier
+            image_id: Image identifier (can be namespace/repository format)
 
         Returns:
             Image metadata or None if not found
         """
         # For manual containers, skip API call
-        if image_id.startswith("manual-"):
-            logger.debug(f"Skipping API call for manual container: {image_id}")
+        if image_id.startswith("manual-") or image_id.startswith("product-listings-"):
+            logger.debug(
+                f"Skipping API call for manual/product-listings container: {image_id}"
+            )
             return None
 
         async with self._semaphore:
-            # Define endpoint patterns to try
+            # Parse image_id - it could be in format namespace/repository or just repository
+            if "/" in image_id:
+                namespace, repository = image_id.split("/", 1)
+            else:
+                # Try common RHOAI namespace
+                namespace = "rhoai"
+                repository = image_id
+
+            # Define endpoint patterns using the repositories API structure
+            # Include broader search patterns that might find containers in alternative namespaces
             endpoint_patterns = [
-                "images/by_id?image_id={image_id}",
-                "images/{image_id}",
-                "repositories/registry/access.redhat.com/rhoai/{image_id}",
+                "repositories/{namespace}/{repository}",
+                "repositories/registry/registry.redhat.io/{namespace}/{repository}",
+                "repositories/registry/registry.access.redhat.com/{namespace}/{repository}",
+                "repositories?filter=namespace=={namespace};repository=={repository}",
+                "repositories?filter=repository=={repository}",  # Search without namespace restriction
+                "repositories?filter=repository~~{repository}",  # Fuzzy repository search
             ]
 
             # Use smart endpoint handling
             result = await self._try_endpoints_smartly(
-                endpoint_patterns, image_id=image_id
+                endpoint_patterns, namespace=namespace, repository=repository
             )
 
             if result is None:
@@ -629,36 +875,59 @@ class ContainerCatalogClient:
         """Get RPM manifest for a container image.
 
         Args:
-            image_id: Image identifier
+            image_id: Image identifier (can be namespace/repository format)
 
         Returns:
             RPM manifest data or None if not found
         """
         # For manual containers, skip API call
-        if image_id.startswith("manual-"):
+        if image_id.startswith("manual-") or image_id.startswith("product-listings-"):
             logger.debug(
-                f"Skipping RPM manifest API call for manual container: {image_id}"
+                f"Skipping RPM manifest API call for manual/product-listings container: {image_id}"
             )
             return None
 
         async with self._semaphore:
-            # Define endpoint patterns to try
+            # Parse image_id - it could be in format namespace/repository or just repository
+            if "/" in image_id:
+                namespace, repository = image_id.split("/", 1)
+            else:
+                # Try common RHOAI namespace
+                namespace = "rhoai"
+                repository = image_id
+
+            # Define endpoint patterns for RPM manifest
+            # Include broader search patterns for finding container manifests
             endpoint_patterns = [
-                "images/rpm_manifest?image_id={image_id}",
-                "images/{image_id}/rpm-manifest",
-                "repositories/{image_id}/manifest",
+                "repositories/{namespace}/{repository}/images",
+                "repositories/{namespace}/{repository}/manifest",
+                "repositories/registry/registry.redhat.io/{namespace}/{repository}/images",
+                "repositories?filter=repository=={repository}/images",  # Search without namespace restriction
+                "repositories?filter=repository~~{repository}/manifest",  # Fuzzy search for manifests
             ]
 
             # Use smart endpoint handling
             result = await self._try_endpoints_smartly(
-                endpoint_patterns, image_id=image_id
+                endpoint_patterns, namespace=namespace, repository=repository
             )
 
-            # Additional processing for RPM manifest specific formats
-            if result and "data" in result and "rpm_manifest" in result["data"]:
-                result = result["data"]["rpm_manifest"]
-            elif result and "manifest" in result:
-                result = result["manifest"]
+            # Try to extract RPM manifest from repository data
+            if result:
+                # If we got repository data with images, try to find RPM manifest
+                if isinstance(result, dict):
+                    if "images" in result:
+                        # Look for RPM manifest in the first image
+                        images = result["images"]
+                        if images and len(images) > 0:
+                            first_image = images[0]
+                            if "manifest" in first_image:
+                                result = first_image["manifest"]
+                            elif "rpm_manifest" in first_image:
+                                result = first_image["rpm_manifest"]
+                    elif "manifest" in result:
+                        result = result["manifest"]
+                    elif "rpm_manifest" in result:
+                        result = result["rpm_manifest"]
 
             if result is None:
                 logger.debug(f"No RPM manifest found with any endpoint for: {image_id}")
@@ -735,6 +1004,32 @@ class ContainerCatalogClient:
 
                 except httpx.HTTPError as e:
                     last_exception = e
+
+                    # Handle specific HTTP status codes
+                    if hasattr(e, "response") and e.response:
+                        if e.response.status_code == 401:
+                            logger.error(
+                                "Authentication required. The Red Hat Container Catalog API may require an API key."
+                            )
+                            logger.info(
+                                "Please contact pyxis-dev@redhat.com for API access information."
+                            )
+                            break  # Don't retry auth errors
+                        elif e.response.status_code == 403:
+                            logger.error(
+                                "Access forbidden. Your API credentials may not have sufficient permissions."
+                            )
+                            break  # Don't retry permission errors
+                        elif e.response.status_code == 429:
+                            # Rate limiting - use longer delay
+                            delay = min(
+                                60, 5 * (2**attempt)
+                            )  # Exponential backoff up to 60s
+                            logger.warning(
+                                f"Rate limited. Waiting {delay}s before retry..."
+                            )
+                            await asyncio.sleep(delay)
+                            continue
 
                     if attempt < self.max_retries:
                         # Calculate backoff delay
@@ -1016,9 +1311,14 @@ async def create_catalog_client(
     Returns:
         Configured catalog client
     """
-    return ContainerCatalogClient(
+    client = ContainerCatalogClient(
         timeout=config.api.timeout,
         max_retries=config.api.max_retries,
         max_concurrent=config.api.max_concurrent_requests,
         product_listings_client=product_listings_client,
     )
+
+    # Set discovery configuration
+    client._max_api_pages = getattr(config.discovery, "max_api_pages", 100)
+
+    return client

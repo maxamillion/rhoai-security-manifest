@@ -25,6 +25,8 @@
 
 rhoai_containers:
   # Configuration for RHOAI 2.19.0
+  # This list includes all core RHOAI containers that should be analyzed for security vulnerabilities
+  # We'll try both rhoai namespace and common RHEL/UBI namespaces since containers may be in different locations
   "2.19.0":
     # Core components
     - namespace: "rhoai"
@@ -138,6 +140,25 @@ rhoai_containers:
       repository: "odh-model-controller-rhel8"
       registry: "registry.redhat.io"
     
+    # Alternative namespace attempts - RHEL/UBI base images that might contain RHOAI components
+    - namespace: "ubi8"
+      repository: "ubi"
+      registry: "registry.redhat.io"
+    - namespace: "rhel8"
+      repository: "rhel"
+      registry: "registry.redhat.io"
+    - namespace: "openshift4"
+      repository: "ose-cli"
+      registry: "registry.redhat.io"
+    
+    # Try some variations of RHOAI container names in different namespaces
+    - namespace: "redhat"
+      repository: "rhoai-rhods-operator"
+      registry: "registry.redhat.io"
+    - namespace: "openshift"
+      repository: "ai-dashboard"
+      registry: "registry.redhat.io"
+    
   # Example for older releases
   "2.8.0":
     - namespace: "openshift-ai"
@@ -151,7 +172,15 @@ default:
     - "openshift-ai"
     - "rhods"
     - "openshift-data-science"
+    - "ubi8"
+    - "rhel8"
+    - "openshift4"
   namespaces:
     - "rhoai"
     - "openshift-ai"
     - "rhods"
+    - "ubi8"
+    - "rhel8"
+    - "openshift4"
+    - "registry.redhat.io"
+    - "redhat"

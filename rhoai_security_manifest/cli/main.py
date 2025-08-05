@@ -15,6 +15,7 @@ from .commands.cache import cache
 from .commands.compare import compare
 from .commands.generate import generate
 from .commands.interactive import interactive
+from .commands.validate import validate
 
 # Create console for rich output
 console = Console()
@@ -265,6 +266,7 @@ cli.add_command(generate)
 cli.add_command(compare)
 cli.add_command(cache)
 cli.add_command(interactive)
+cli.add_command(validate)
 
 
 def main():

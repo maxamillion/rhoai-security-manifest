@@ -34,6 +34,7 @@ lint: ## Run linting tools
 
 format: ## Format code
 	$(UV) run black $(PACKAGE_NAME) tests/
+	$(UV) run isort $(PACKAGE_NAME) tests/
 
 type-check: ## Run type checking
 	$(UV) run mypy $(PACKAGE_NAME)
@@ -49,16 +50,11 @@ pre-commit: format quality test ## Run pre-commit checks
 build: clean ## Build the package
 	$(UV) build
 
-clean: ## Clean build artifacts
-	rm -rf build/
-	rm -rf dist/
-	rm -rf *.egg-info/
-	rm -rf .coverage
-	rm -rf htmlcov/
-	rm -rf .pytest_cache/
-	rm -rf .mypy_cache/
-	rm -rf .ruff_cache/
-	find . -type d -name __pycache__ -exec rm -rf {} +
+clean: ## Clean build artifacts and generated files
+	rm -rf build/ dist/ *.egg-info/
+	rm -rf .coverage htmlcov/
+	rm -rf .pytest_cache/ .mypy_cache/ .ruff_cache/
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
 
 setup-dev: install-dev ## Setup development environment
@@ -81,11 +77,9 @@ run: ## Run the CLI tool for development (usage: 'make run [command]' or 'make r
 status version cache compare generate interactive:
 	@:
 
-run-cli: ## Run the CLI tool (example)
+example: ## Run CLI help as an example
 	$(UV) run python -m $(PACKAGE_NAME).cli.main --help
 
-docker-build: ## Build Docker image
+docker: ## Build and run Docker container
 	docker build -t rhoai-security-manifest:latest .
-
-docker-run: ## Run Docker container
 	docker run --rm -it rhoai-security-manifest:latest --help

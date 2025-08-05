@@ -1021,6 +1021,7 @@ class SecurityDataClient:
         # Analyze each container in the bundle
         for container in containers:
             container_name = container.get("name", "")
+            logger.debug(f"Analyzing container: {container_name}")
 
             # Search for bundle-specific vulnerabilities using individual terms
             bundle_terms = [
