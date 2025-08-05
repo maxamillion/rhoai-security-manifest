@@ -316,14 +316,10 @@ class SecurityDataMapper:
         """
         queries = []
 
-        # Bundle-specific queries - individual terms
-        bundle_terms = [
-            bundle.package,
-            f"rhods-{bundle.package}",
-            f"openshift-{bundle.package}",
-        ]
+        # Get validated search terms for the bundle package
+        validated_terms = self._get_validated_bundle_terms(bundle.package)
 
-        for term in bundle_terms:
+        for term in validated_terms:
             queries.append(
                 {
                     "query_type": "operator_bundle",
@@ -334,8 +330,8 @@ class SecurityDataMapper:
                 }
             )
 
-        # Channel-specific query
-        if bundle.channel:
+        # Channel-specific query (only if it's a valid search term)
+        if bundle.channel and self._is_valid_search_term(bundle.channel):
             queries.append(
                 {
                     "query_type": "operator_channel",
@@ -345,8 +341,8 @@ class SecurityDataMapper:
                 }
             )
 
-        # CSV-specific query
-        if bundle.csv_name:
+        # CSV-specific query (only if it's a valid search term)
+        if bundle.csv_name and self._is_valid_search_term(bundle.csv_name):
             queries.append(
                 {
                     "query_type": "csv",
@@ -357,6 +353,103 @@ class SecurityDataMapper:
             )
 
         return queries
+
+    def _get_validated_bundle_terms(self, bundle_package: str) -> list[str]:
+        """Get validated search terms for a bundle package.
+
+        Args:
+            bundle_package: Bundle package name
+
+        Returns:
+            List of validated search terms that are likely to work with the API
+        """
+        terms = []
+
+        # Known problematic patterns to avoid
+        problematic_patterns = [
+            "rhods-rhods-operator",
+            "openshift-rhods-operator",
+            "rhoai-rhoai",
+            "rhods-rhods",
+        ]
+
+        # Base term (the package name itself)
+        if self._is_valid_search_term(bundle_package):
+            terms.append(bundle_package)
+
+        # Generate alternative terms, avoiding problematic patterns
+        potential_terms = [
+            bundle_package,
+            f"rhods-{bundle_package}",
+            f"openshift-{bundle_package}",
+        ]
+
+        for term in potential_terms:
+            # Skip terms that match problematic patterns
+            if any(problematic in term.lower() for problematic in problematic_patterns):
+                logger.debug(f"Skipping problematic term pattern: '{term}'")
+                continue
+
+            if self._is_valid_search_term(term) and term not in terms:
+                terms.append(term)
+
+        # If no terms are valid, provide safe fallbacks
+        if not terms:
+            logger.warning(
+                f"No valid terms found for bundle '{bundle_package}', using fallbacks"
+            )
+            terms = ["rhods-operator", "openshift-ai", "rhoai"]
+
+        logger.debug(
+            f"Generated {len(terms)} validated terms for bundle '{bundle_package}': {terms}"
+        )
+        return terms
+
+    def _is_valid_search_term(self, term: str) -> bool:
+        """Check if a search term is likely to work with the Red Hat Security Data API.
+
+        Args:
+            term: Search term to validate
+
+        Returns:
+            True if the term is likely to work, False otherwise
+        """
+        if not term or not term.strip():
+            return False
+
+        term = term.strip()
+
+        # Known problematic patterns
+        problematic_patterns = [
+            "rhods-rhods-operator",
+            "openshift-rhods-operator",
+            "rhoai-rhoai",
+            "rhods-rhods",
+            # Add more as discovered
+        ]
+
+        # Check for exact problematic matches
+        if term.lower() in [p.lower() for p in problematic_patterns]:
+            return False
+
+        # Basic validation rules
+        if len(term) < 3:  # Too short
+            return False
+
+        if term.count("-") > 2:  # Too many hyphens typically cause issues
+            return False
+
+        # Contains only valid characters (alphanumeric, hyphens, underscores, dots)
+        import re
+
+        if not re.match(r"^[a-zA-Z0-9\-_\.]+$", term):
+            return False
+
+        # Check for double hyphens or other suspicious patterns
+        if "--" in term or term.startswith("-") or term.endswith("-"):
+            return False
+
+        return True
 
     def _extract_base_name(self, container_name: str) -> str:
         """Extract base name from container name for pattern matching.

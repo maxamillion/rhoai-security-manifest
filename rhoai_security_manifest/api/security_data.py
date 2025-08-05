@@ -154,6 +154,8 @@ class SecurityDataClient:
         self.max_retries = max_retries
         self.max_concurrent = max_concurrent
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._api_health_checked = False
+        self._api_healthy = True
 
         # Configure HTTP client
         self._client = httpx.AsyncClient(
@@ -176,6 +178,83 @@ class SecurityDataClient:
     async def close(self):
         """Close the HTTP client."""
         await self._client.aclose()
+
+    async def check_api_health(self) -> bool:
+        """Check if the Red Hat Security Data API is accessible and responding.
+
+        Returns:
+            True if API is healthy, False otherwise
+        """
+        if self._api_health_checked:
+            return self._api_healthy
+
+        try:
+            # Try a simple search with a known-working term
+            test_query = "openshift-ai"
+            url = urljoin(self.base_url, "security/cve")
+            params = {"q": test_query, "limit": 1}
+
+            logger.debug("Performing API health check...")
+            response = await self._client.request("GET", url, params=params)
+
+            # Consider the API healthy if we get any response (even 404 is better than connection error)
+            self._api_healthy = response.status_code in [200, 404]
+            self._api_health_checked = True
+
+            if self._api_healthy:
+                logger.debug("API health check passed")
+            else:
+                logger.warning(
+                    f"API health check failed with status {response.status_code}"
+                )
+
+        except Exception as e:
+            logger.warning(f"API health check failed: {e}")
+            self._api_healthy = False
+            self._api_health_checked = True
+
+        return self._api_healthy
+
+    def validate_search_query(self, query: str) -> tuple[bool, str]:
+        """Validate a search query before sending to the API.
+
+        Args:
+            query: Query string to validate
+
+        Returns:
+            Tuple of (is_valid, reason)
+        """
+        if not query or not query.strip():
+            return False, "Query is empty"
+
+        cleaned = query.strip()
+
+        # Known problematic patterns
+        problematic_patterns = [
+            "rhods-rhods-operator",
+            "openshift-rhods-operator",
+            "rhoai-rhoai",
+            "rhods-rhods",
+        ]
+
+        if cleaned.lower() in [p.lower() for p in problematic_patterns]:
+            return False, f"Query '{cleaned}' matches known problematic pattern"
+
+        if len(cleaned) < 3:
+            return False, "Query too short (minimum 3 characters)"
+
+        if cleaned.count("-") > 2:
+            return False, "Query has too many hyphens (likely to cause 404)"
+
+        import re
+
+        if not re.match(r"^[a-zA-Z0-9\-_\.\s]+$", cleaned):
+            return False, "Query contains invalid characters"
+
+        if "--" in cleaned or cleaned.startswith("-") or cleaned.endswith("-"):
+            return False, "Query has invalid hyphen patterns"
+
+        return True, "Query appears valid"
 
     async def get_cve_details(self, cve_id: str) -> Optional[CVEData]:
         """Get detailed information for a specific CVE.
@@ -222,8 +301,23 @@ class SecurityDataClient:
             logger.warning("Empty query provided to search_cves")
             return []
 
+        # Pre-validate the query
+        is_valid, reason = self.validate_search_query(query.strip())
+        if not is_valid:
+            logger.warning(f"Invalid query '{query}': {reason}")
+            # Continue with cleaning anyway - the cleaning might fix it
+
         # Clean query to remove problematic characters and patterns
         cleaned_query = self._clean_search_query(query.strip())
+
+        # Double-check the cleaned query
+        is_cleaned_valid, cleaned_reason = self.validate_search_query(cleaned_query)
+        if not is_cleaned_valid:
+            logger.warning(
+                f"Cleaned query '{cleaned_query}' is still invalid: {cleaned_reason}"
+            )
+            # Fall back to a known working query
+            cleaned_query = "openshift-ai"
 
         async with self._semaphore:
             url = urljoin(self.base_url, "security/cve")
@@ -259,7 +353,18 @@ class SecurityDataClient:
             except Exception as e:
                 if "404" in str(e):
                     logger.warning(
-                        f"No CVEs found for query '{cleaned_query}' (404 error) - this may indicate the query format is not supported by the API"
+                        f"No CVEs found for query '{cleaned_query}' (404 error) - attempting fallback search"
+                    )
+
+                    # Try fallback terms for 404 errors
+                    fallback_result = await self._try_fallback_search(
+                        cleaned_query, params, url
+                    )
+                    if fallback_result:
+                        return fallback_result
+
+                    logger.warning(
+                        f"No CVEs found for query '{cleaned_query}' or fallback terms - this may indicate the query format is not supported by the API"
                     )
                 else:
                     logger.error(f"CVE search failed for query '{cleaned_query}': {e}")
@@ -582,11 +687,64 @@ class SecurityDataClient:
                 f"Multi-term query detected, using first term: '{cleaned}' (original: '{query}')"
             )
 
+        # Handle problematic patterns that cause 404 errors
+        problematic_patterns = {
+            # Hyphenated compound terms that the API rejects
+            "rhods-rhods-operator": "rhods-operator",
+            "openshift-rhods-operator": "rhods-operator",
+            # Double product names
+            "rhoai-rhoai": "rhoai",
+            "rhods-rhods": "rhods",
+            # Complex operator names that should be simplified
+            "rhods-operator-rhods": "rhods-operator",
+            "openshift-ai-rhods": "openshift-ai",
+        }
+
+        # Check for known problematic patterns and replace with working alternatives
+        for problematic, alternative in problematic_patterns.items():
+            if cleaned.lower() == problematic.lower():
+                logger.debug(
+                    f"Replacing problematic query '{cleaned}' with '{alternative}'"
+                )
+                cleaned = alternative
+                break
+
+        # Additional pattern-based cleaning for compound hyphenated terms
+        # If a term has more than 2 hyphens, try to extract the most meaningful part
+        if cleaned.count("-") > 2:
+            parts = cleaned.split("-")
+            # Prioritize keeping product names and operator/controller terms
+            important_parts = []
+            for part in parts:
+                if part.lower() in [
+                    "rhods",
+                    "rhoai",
+                    "openshift",
+                    "operator",
+                    "controller",
+                    "ai",
+                ]:
+                    important_parts.append(part)
+
+            if len(important_parts) >= 2:
+                cleaned = "-".join(important_parts[:2])
+                logger.debug(
+                    f"Simplified multi-hyphen query to: '{cleaned}' (from: '{query}')"
+                )
+
         # Remove potentially problematic characters for URL encoding
         # Keep alphanumeric, hyphens, underscores, and dots
         import re
 
         cleaned = re.sub(r"[^a-zA-Z0-9\-_\.]", "", cleaned)
+
+        # Validate that the cleaned query is likely to work
+        # Very short terms or terms with certain patterns are problematic
+        if len(cleaned) < 3:
+            logger.warning(
+                f"Query too short after cleaning: '{cleaned}' from '{query}'"
+            )
+            return "openshift-ai"  # Fallback to a known working term
 
         # Ensure query is not empty after cleaning
         if not cleaned:
@@ -595,6 +753,90 @@ class SecurityDataClient:
 
         logger.debug(f"Cleaned query: '{cleaned}' (from original: '{query}')")
         return cleaned
+
+    async def _try_fallback_search(
+        self, failed_query: str, original_params: dict, url: str
+    ) -> list[CVEData]:
+        """Try fallback search terms when the original query fails with 404.
+
+        Args:
+            failed_query: The query that failed
+            original_params: Original search parameters
+            url: API endpoint URL
+
+        Returns:
+            List of CVEs from successful fallback search, or empty list
+        """
+        # Define fallback terms based on the failed query
+        fallback_terms = []
+
+        # Extract meaningful terms from the failed query
+        failed_lower = failed_query.lower()
+
+        # Priority fallback terms - most general to specific
+        base_fallbacks = ["openshift-ai", "rhoai", "rhods"]
+
+        # Add specific fallbacks based on failed query content
+        if "operator" in failed_lower:
+            fallback_terms.extend(["rhods-operator", "operator"])
+        if "rhods" in failed_lower:
+            fallback_terms.extend(["rhods", "openshift-ai"])
+        if "rhoai" in failed_lower:
+            fallback_terms.extend(["rhoai", "openshift-ai"])
+        if "openshift" in failed_lower:
+            fallback_terms.extend(["openshift-ai", "openshift"])
+
+        # Always include base fallbacks
+        fallback_terms.extend(base_fallbacks)
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_fallbacks = []
+        for term in fallback_terms:
+            if term not in seen and term != failed_query:
+                seen.add(term)
+                unique_fallbacks.append(term)
+
+        logger.debug(
+            f"Trying {len(unique_fallbacks)} fallback terms for failed query '{failed_query}': {unique_fallbacks}"
+        )
+
+        # Try each fallback term
+        for fallback_term in unique_fallbacks:
+            try:
+                # Create new params with fallback term
+                fallback_params = original_params.copy()
+                fallback_params["q"] = fallback_term
+
+                logger.debug(f"Attempting fallback search with term: '{fallback_term}'")
+                response = await self._make_request("GET", url, params=fallback_params)
+                data = response.json()
+
+                cves = []
+                for item in data.get("data", []):
+                    try:
+                        cve = self._parse_cve_data(item)
+                        cves.append(cve)
+                    except Exception as e:
+                        logger.warning(f"Failed to parse CVE data from fallback: {e}")
+                        continue
+
+                if cves:
+                    logger.info(
+                        f"Fallback search successful: found {len(cves)} CVEs with term '{fallback_term}' (original: '{failed_query}')"
+                    )
+                    return cves
+                else:
+                    logger.debug(f"Fallback term '{fallback_term}' returned no results")
+
+            except Exception as e:
+                logger.debug(f"Fallback search failed for term '{fallback_term}': {e}")
+                continue
+
+        logger.debug(
+            f"All fallback searches failed for original query: '{failed_query}'"
+        )
+        return []
 
     def _parse_cve_data(self, data: dict[str, Any]) -> CVEData:
         """Parse CVE data from API response."""
