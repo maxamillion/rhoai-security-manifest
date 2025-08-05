@@ -34,8 +34,6 @@ lint: ## Run linting tools
 
 format: ## Format code
 	$(UV) run black $(PACKAGE_NAME) tests/
-	$(UV) run isort $(PACKAGE_NAME) tests/
-	$(UV) run ruff check --fix $(PACKAGE_NAME) tests/
 
 type-check: ## Run type checking
 	$(UV) run mypy $(PACKAGE_NAME)
