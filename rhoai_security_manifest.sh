@@ -13,6 +13,7 @@ OPERATOR_NAME="${OPERATOR_NAME:-rhods-operator}"
 OUTPUT_FILE="${OUTPUT_FILE:-}"
 VERBOSE="${VERBOSE:-false}"
 CHECK_DEPS_ONLY="${CHECK_DEPS_ONLY:-false}"
+GITHUB_BASE_URL="${GITHUB_BASE_URL:-https://raw.githubusercontent.com/red-hat-data-services/rhoai-disconnected-install-helper/main}"
 
 # Function to display usage information
 fn_usage() {
@@ -20,6 +21,7 @@ fn_usage() {
 Usage: $0 [OPTIONS]
 
 Generate a security manifest for Red Hat OpenShift AI.
+Automatically fetches images from both Red Hat registry and GitHub disconnected helper manifests.
 
 OPTIONS:
     -v, --version VERSION       RHOAI version (default: ${RHOAI_VERSION})
@@ -38,9 +40,10 @@ ENVIRONMENT VARIABLES:
     OPERATOR_NAME              Same as --operator
     OUTPUT_FILE                Same as --output
     VERBOSE                    Same as --verbose (true/false)
+    GITHUB_BASE_URL            GitHub repository base URL for manifests
 
 EXAMPLES:
-    # Use defaults
+    # Use defaults (fetches from both registry and GitHub)
     $0
 
     # Check dependencies only
@@ -60,6 +63,9 @@ EXAMPLES:
 
     # Generate manifest with verbose output
     $0 --version 2.23.0 --verbose
+
+    # Use custom GitHub repository
+    GITHUB_BASE_URL=https://raw.githubusercontent.com/my-org/my-repo/main $0
 
 EOF
 }
@@ -100,6 +106,12 @@ fn_provide_installation_guidance() {
                     echo "  $install_cmd podman" >&2
                 fi
                 echo "  Or visit: https://podman.io/getting-started/installation" >&2
+                ;;
+            "curl")
+                if [[ -n "$pkg_manager" ]]; then
+                    echo "  $install_cmd curl" >&2
+                fi
+                echo "  Or visit: https://curl.se/download.html" >&2
                 ;;
             "jq")
                 if [[ -n "$pkg_manager" ]]; then
@@ -144,7 +156,7 @@ fn_validate_dependencies() {
     local all_tools_available=true
     
     # Critical tools - script cannot function without these
-    local critical_tools=("podman" "jq" "awk" "tr" "wc")
+    local critical_tools=("podman" "jq" "awk" "tr" "wc" "curl")
     
     # Basic tools - usually available, but good to check
     local basic_tools=("cat" "echo")
@@ -190,7 +202,7 @@ fn_check_tool_versions() {
     echo "Tool versions:"
     
     # Check versions for tools that support --version
-    local tools_with_version=("podman" "jq")
+    local tools_with_version=("podman" "jq" "curl")
     
     for tool in "${tools_with_version[@]}"; do
         if command -v "$tool" &> /dev/null; then
@@ -201,6 +213,9 @@ fn_check_tool_versions() {
                     ;;
                 "jq")
                     version=$(jq --version 2>/dev/null || echo "unknown")
+                    ;;
+                "curl")
+                    version=$(curl --version 2>/dev/null | head -n1 || echo "unknown")
                     ;;
             esac
             echo "  $tool: $version"
@@ -280,11 +295,120 @@ fn_validate_inputs() {
     fi
 }
 
+# Function to fetch GitHub manifest for a given version
+fn_fetch_github_manifest() {
+    local version="$1"
+    local temp_file
+    temp_file=$(mktemp)
+    
+    # Try different version formats for GitHub lookup
+    local version_patterns=()
+    
+    # Add the exact version
+    version_patterns+=("$version")
+    
+    # If version ends with .0, try without it (e.g., 2.22.0 -> 2.22)
+    if [[ "$version" =~ ^([0-9]+\.[0-9]+)\.0$ ]]; then
+        version_patterns+=("${BASH_REMATCH[1]}")
+    fi
+    
+    for pattern in "${version_patterns[@]}"; do
+        local github_url="${GITHUB_BASE_URL}/rhoai-${pattern}.md"
+        
+        if [[ "$VERBOSE" == "true" ]]; then
+            echo "Attempting to fetch GitHub manifest: $github_url" >&2
+        fi
+        
+        # Use curl with timeout and follow redirects
+        if curl -s -f -L --max-time 30 "$github_url" > "$temp_file" 2>/dev/null; then
+            local file_size
+            file_size=$(wc -l < "$temp_file")
+            
+            if [[ "$file_size" -gt 0 ]]; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "✓ Successfully fetched GitHub manifest ($file_size lines)" >&2
+                fi
+                echo "$temp_file"
+                return 0
+            fi
+        fi
+        
+        if [[ "$VERBOSE" == "true" ]]; then
+            echo "✗ Failed to fetch: $github_url" >&2
+        fi
+    done
+    
+    # Clean up temp file if all attempts failed
+    rm -f "$temp_file"
+    return 1
+}
+
+# Function to parse container images from GitHub manifest
+fn_parse_github_images() {
+    local manifest_file="$1"
+    local temp_images
+    temp_images=$(mktemp)
+    
+    # Extract container image references from the markdown file
+    # Look for lines containing registry URLs and extract the image reference
+    grep -E "(registry\.redhat\.io|quay\.io)" "$manifest_file" | \
+        grep -oE "(registry\.redhat\.io|quay\.io)/[^[:space:]]*" | \
+        sed 's/[[:space:]]*$//' | \
+        sort | uniq > "$temp_images"
+    
+    if [[ "$VERBOSE" == "true" ]]; then
+        local image_count
+        image_count=$(wc -l < "$temp_images")
+        echo "Parsed $image_count unique images from GitHub manifest" >&2
+    fi
+    
+    echo "$temp_images"
+}
+
+# Function to merge and deduplicate images from multiple sources
+fn_merge_and_deduplicate() {
+    local registry_file="$1"
+    local github_file="$2"
+    local output_file="$3"
+    
+    # Create header with source information
+    {
+        echo "# RHOAI Security Manifest - Version $RHOAI_VERSION"
+        echo "# Generated on $(date)"
+        echo "# Sources:"
+        
+        if [[ -f "$registry_file" ]]; then
+            local registry_count
+            registry_count=$(wc -l < "$registry_file")
+            echo "#   - Registry: $registry_count images"
+        fi
+        
+        if [[ -f "$github_file" ]]; then
+            local github_count
+            github_count=$(wc -l < "$github_file")
+            echo "#   - GitHub manifest: $github_count images"
+        fi
+        
+        echo "#"
+        echo ""
+        
+        # Merge files and deduplicate
+        if [[ -f "$registry_file" && -f "$github_file" ]]; then
+            cat "$registry_file" "$github_file" | sort | uniq
+        elif [[ -f "$registry_file" ]]; then
+            cat "$registry_file"
+        elif [[ -f "$github_file" ]]; then
+            cat "$github_file"
+        fi
+    } > "$output_file"
+}
+
 # Function to generate output filename if not provided
 fn_generate_output_filename() {
     if [[ -z "$OUTPUT_FILE" ]]; then
         # Convert version format for filename (e.g., 2.22.0 -> 2220)
-        local version_formatted=$(echo "$RHOAI_VERSION" | tr -d '.')
+        local version_formatted
+        version_formatted=$(echo "$RHOAI_VERSION" | tr -d '.')
         OUTPUT_FILE="rhoai-${version_formatted}"
     fi
 }
@@ -295,16 +419,25 @@ fn_generate_manifest() {
     echo "Version: $RHOAI_VERSION"
     echo "Registry: $REGISTRY_URL:$OPENSHIFT_VERSION"
     echo "Operator: $OPERATOR_NAME"
+    echo "GitHub Source: $GITHUB_BASE_URL"
     echo "Output: $OUTPUT_FILE"
     echo ""
     
+    local temp_registry_file=""
+    local temp_github_file=""
+    
+    # Fetch registry images
+    echo "Fetching images from registry..."
+    
     local full_registry_url="${REGISTRY_URL}:${OPENSHIFT_VERSION}"
+    temp_registry_file=$(mktemp)
     
     # Generate the catalog and extract images
     catalog=$(podman run --rm -it --entrypoint bash "$full_registry_url" -c "cat /configs/${OPERATOR_NAME}/catalog.json")
     
     if [[ -z "$catalog" ]]; then
         echo "Error: Failed to retrieve catalog from registry" >&2
+        rm -f "$temp_registry_file"
         exit 1
     fi
     
@@ -314,11 +447,58 @@ fn_generate_manifest() {
          select(.name==($operator + "." + $version)) | 
          .relatedImages[] | 
          if .name == "" then "olm_bundle: " + .image else .name + ": " + .image end' | \
-        awk '{ print $2 }' > "$OUTPUT_FILE"
+        awk '{ print $2 }' > "$temp_registry_file"
     
-    if [[ $? -eq 0 ]]; then
-        echo "Security manifest generated successfully: $OUTPUT_FILE"
-        echo "Total images found: $(wc -l < "$OUTPUT_FILE")"
+    if [[ $? -ne 0 ]]; then
+        echo "Error: Failed to generate registry manifest" >&2
+        rm -f "$temp_registry_file"
+        exit 1
+    fi
+    
+    local registry_count
+    registry_count=$(wc -l < "$temp_registry_file")
+    echo "✓ Found $registry_count images from registry"
+    
+    # Fetch GitHub manifest images
+    echo "Fetching images from GitHub manifest..."
+    
+    local github_manifest_file
+    if github_manifest_file=$(fn_fetch_github_manifest "$RHOAI_VERSION"); then
+        temp_github_file=$(fn_parse_github_images "$github_manifest_file")
+        rm -f "$github_manifest_file"
+        
+        local github_count
+        github_count=$(wc -l < "$temp_github_file")
+        echo "✓ Found $github_count images from GitHub manifest"
+    else
+        echo "⚠ Warning: Could not fetch GitHub manifest for version $RHOAI_VERSION" >&2
+        echo "  Continuing with registry data only..." >&2
+    fi
+    
+    # Merge and deduplicate results
+    echo "Merging and deduplicating image lists..."
+    fn_merge_and_deduplicate "$temp_registry_file" "$temp_github_file" "$OUTPUT_FILE"
+    
+    # Clean up temporary files
+    rm -f "$temp_registry_file" "$temp_github_file"
+    
+    # Report results
+    if [[ -f "$OUTPUT_FILE" ]]; then
+        echo "✓ Security manifest generated successfully: $OUTPUT_FILE"
+        
+        # Count total images (excluding header comments)
+        local total_images
+        total_images=$(grep -v '^#' "$OUTPUT_FILE" | grep -v '^$' | wc -l)
+        echo "Total unique images: $total_images"
+        
+        if [[ "$VERBOSE" == "true" ]]; then
+            echo ""
+            echo "Manifest contents preview:"
+            head -20 "$OUTPUT_FILE"
+            if [[ $(wc -l < "$OUTPUT_FILE") -gt 20 ]]; then
+                echo "... (showing first 20 lines)"
+            fi
+        fi
     else
         echo "Error: Failed to generate security manifest" >&2
         exit 1
