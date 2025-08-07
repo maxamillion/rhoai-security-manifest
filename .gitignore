@@ -214,3 +214,5 @@ security_reports/
 cache/
 logs/
 temp/
+
+output/
