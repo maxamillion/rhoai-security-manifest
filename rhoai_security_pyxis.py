@@ -52,7 +52,7 @@ def main():
         #     print(f"::::: {image['display_data']['name']} in {repo['name']}")
         print(f"::::: {image['display_data']['name']}")
         print(f"::::: id: {image['_id']}")
-        print(f"::::: Advisory: {pyxis_base_url}{image['repositories'][0]['_links']['image_advisory']['href']}")
+        print(f"::::: Advisory: https://access.redhat.com/errata/{image['repositories'][0]['_links']['image_advisory']['href'].split('/')[-1]}")
         print(f"::::: Freshness Grade: {image['freshness_grades'][0]['grade']}")
         print("CVE Data:")
         
