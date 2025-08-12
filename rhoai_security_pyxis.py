@@ -33,6 +33,7 @@ Examples:
   %(prog)s --release v2.22 --format json --verbose
   %(prog)s -r v2.23 --format csv --output rhoai_security_v2.23.csv
   %(prog)s --release v2.24 --format text --output rhoai_report.txt --verbose
+  %(prog)s --release v2.21 --show-all-cves
         """,
     )
     parser.add_argument(
@@ -65,6 +66,11 @@ Examples:
     parser.add_argument(
         "--quiet", action="store_true", help="Suppress status messages (except errors)"
     )
+    parser.add_argument(
+        "--show-all-cves",
+        action="store_true",
+        help="Show all CVEs for each image without truncation (default: show first 3)"
+    )
     return parser.parse_args()
 
 
@@ -82,7 +88,7 @@ def get_output_filename(release, format_type, custom_output=None):
         return None  # stdout for text format
 
 
-def format_text_output(images_data, total_cves, use_color=True):
+def format_text_output(images_data, total_cves, use_color=True, show_all_cves=False):
     """Format data for human-readable text output."""
     output_lines = []
 
@@ -142,10 +148,16 @@ def format_text_output(images_data, total_cves, use_color=True):
         output_lines.append(f"    CVEs: {cve_color}{cve_count}{ENDC}")
 
         if image.get("cves"):
-            for cve in image["cves"][:3]:  # Show first 3 CVEs
-                output_lines.append(f"      - {cve}")
-            if len(image["cves"]) > 3:
-                output_lines.append(f"      ... and {len(image['cves']) - 3} more")
+            if show_all_cves:
+                # Show all CVEs without truncation
+                for cve in image["cves"]:
+                    output_lines.append(f"      - {cve}")
+            else:
+                # Show first 3 CVEs (original behavior)
+                for cve in image["cves"][:3]:
+                    output_lines.append(f"      - {cve}")
+                if len(image["cves"]) > 3:
+                    output_lines.append(f"      ... and {len(image['cves']) - 3} more")
         else:
             output_lines.append(f"      {OKGREEN}No CVEs found{ENDC}")
 
@@ -374,7 +386,7 @@ def main():
             write_output(formatted_data, output_filename, "csv")
         else:  # text format
             formatted_text = format_text_output(
-                rhoai_images, unique_total_cves, not args.no_color
+                rhoai_images, unique_total_cves, not args.no_color, args.show_all_cves
             )
             write_output(formatted_text, output_filename, "text")
 
