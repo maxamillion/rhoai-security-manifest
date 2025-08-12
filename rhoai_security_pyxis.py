@@ -2,12 +2,33 @@
 
 import requests
 import json
+import argparse
 from pprint import pprint
 
 
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Query Red Hat Pyxis API for RHOAI security information",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --release v2.21
+  %(prog)s --release v2.22
+  %(prog)s -r v2.23
+        """
+    )
+    parser.add_argument(
+        "-r", "--release",
+        default="v2.21",
+        help="RHOAI release version (default: v2.21)"
+    )
+    return parser.parse_args()
+
+
 def main():
-    # should be a parameter
-    rhoai_release = "v2.21"
+    args = parse_arguments()
+    rhoai_release = args.release
     
     rhoai_total_cves = []
 
