@@ -5,8 +5,21 @@ import json
 import csv
 import argparse
 import sys
+import logging
+import time
 from datetime import datetime
 from pprint import pprint
+
+
+def setup_logging(verbose=False):
+    """Configure logging for the application."""
+    log_level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    return logging.getLogger(__name__)
 
 
 def parse_arguments():
@@ -17,9 +30,9 @@ def parse_arguments():
         epilog="""
 Examples:
   %(prog)s --release v2.21
-  %(prog)s --release v2.22 --format json
+  %(prog)s --release v2.22 --format json --verbose
   %(prog)s -r v2.23 --format csv --output rhoai_security_v2.23.csv
-  %(prog)s --release v2.24 --format text --output rhoai_report.txt
+  %(prog)s --release v2.24 --format text --output rhoai_report.txt --verbose
         """,
     )
     parser.add_argument(
@@ -42,6 +55,15 @@ Examples:
     )
     parser.add_argument(
         "--no-color", action="store_true", help="Disable colored output for text format"
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging and progress information",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="Suppress status messages (except errors)"
     )
     return parser.parse_args()
 
@@ -206,37 +228,76 @@ def write_output(content, filename, format_type):
 
 def main():
     args = parse_arguments()
+
+    # Setup logging based on arguments
+    logger = setup_logging(args.verbose)
+
+    # Configure quiet mode
+    if args.quiet:
+        logging.getLogger().setLevel(logging.ERROR)
+
     rhoai_release = args.release
+    start_time = time.time()
+
+    logger.info(f"Starting RHOAI security analysis for release: {rhoai_release}")
+    logger.info(f"Output format: {args.format}")
 
     rhoai_total_cves = []
 
     # this is static, someone on the Pyxis team gave me this
     rhoai_product_id = "63b85b573112fe5a95ee9a3a"
+    logger.debug(f"Using RHOAI product ID: {rhoai_product_id}")
 
     pyxis_base_url = "https://catalog.redhat.com/api/containers"
+    logger.debug(f"Pyxis API base URL: {pyxis_base_url}")
 
     try:
         # get the list of image data related to RHOAI
-        repositories_in_rhoai_request = requests.get(
+        logger.info("Fetching RHOAI repository listings from Pyxis API...")
+        repositories_url = (
             f"{pyxis_base_url}/v1/product-listings/id/{rhoai_product_id}/repositories"
         )
+        logger.debug(f"Repository request URL: {repositories_url}")
+
+        repositories_in_rhoai_request = requests.get(repositories_url)
         repositories_in_rhoai_request.raise_for_status()
 
+        repositories_data = repositories_in_rhoai_request.json()["data"]
+        logger.info(f"Found {len(repositories_data)} repositories to analyze")
+
         # pull only the images that are tagged with the RHOAI release
+        logger.info(f"Searching for images tagged with release: {rhoai_release}")
         rhoai_images = []
-        for repo in repositories_in_rhoai_request.json()["data"]:
-            detected_rhoai_images = []
-            images_in_repository_request = requests.get(
-                f"{pyxis_base_url}/{repo['_links']['images']['href']}"
+
+        for repo_idx, repo in enumerate(repositories_data, 1):
+            repo_name = repo.get("display_data", {}).get("name", "unknown")
+            logger.info(
+                f"Processing repository {repo_idx}/{len(repositories_data)}: {repo_name}"
             )
+
+            detected_rhoai_images = []
+            images_url = f"{pyxis_base_url}/{repo['_links']['images']['href']}"
+            logger.debug(f"Fetching images from: {images_url}")
+
+            images_in_repository_request = requests.get(images_url)
             images_in_repository_request.raise_for_status()
 
-            for image in images_in_repository_request.json()["data"]:
+            images_data = images_in_repository_request.json()["data"]
+            logger.debug(f"Found {len(images_data)} total images in repository")
+
+            for image in images_data:
                 for repository in image["repositories"]:
                     for tags in repository["tags"]:
                         if rhoai_release in tags["name"]:
+                            logger.debug(
+                                f"Found matching tag: {tags['name']} in image {image.get('_id', 'unknown')}"
+                            )
                             detected_rhoai_images.append(image)
+
             if detected_rhoai_images:
+                logger.info(
+                    f"Found {len(detected_rhoai_images)} images for {repo_name} with release {rhoai_release}"
+                )
                 images_sorted_by_date = sorted(
                     detected_rhoai_images,
                     key=lambda repo_images: repo_images["creation_date"],
@@ -244,29 +305,64 @@ def main():
                 image_found = images_sorted_by_date[-1]
                 image_found["display_data"] = repo["display_data"]
                 rhoai_images.append(image_found)
+                logger.debug(
+                    f"Selected most recent image: {image_found.get('_id', 'unknown')}"
+                )
+            else:
+                logger.debug(
+                    f"No images found for {repo_name} with release {rhoai_release}"
+                )
+
+        logger.info(f"Total images selected for analysis: {len(rhoai_images)}")
 
         # Collect CVE data for each image
-        for image in rhoai_images:
-            cve_data = requests.get(
-                f"{pyxis_base_url}/{image['_links']['vulnerabilities']['href']}"
+        logger.info("Collecting CVE data for each image...")
+
+        for image_idx, image in enumerate(rhoai_images, 1):
+            image_name = image.get("display_data", {}).get("name", "unknown")
+            logger.info(
+                f"Analyzing CVEs for image {image_idx}/{len(rhoai_images)}: {image_name}"
             )
+
+            cve_url = f"{pyxis_base_url}/{image['_links']['vulnerabilities']['href']}"
+            logger.debug(f"Fetching CVE data from: {cve_url}")
+
+            cve_data = requests.get(cve_url)
             cve_data.raise_for_status()
 
             image_cves = []
-            if cve_data.json()["data"]:
-                for cve in cve_data.json()["data"]:
+            cve_response_data = cve_data.json()["data"]
+
+            if cve_response_data:
+                logger.debug(f"Found {len(cve_response_data)} CVEs for {image_name}")
+                for cve in cve_response_data:
                     cve_url = f"https://access.redhat.com/security/cve/{cve['cve_id']}"
                     image_cves.append(cve_url)
                     rhoai_total_cves.append(cve_url)
+            else:
+                logger.debug(f"No CVEs found for {image_name}")
 
             # Add CVE data to image object
             image["cves"] = image_cves
+            logger.info(
+                f"Completed CVE analysis for {image_name}: {len(image_cves)} CVEs found"
+            )
 
         # Remove duplicates from total CVEs
         unique_total_cves = list(set(rhoai_total_cves))
+        logger.info(
+            f"Analysis complete: {len(unique_total_cves)} unique CVEs found across all images"
+        )
+
+        # Show timing information
+        analysis_time = time.time() - start_time
+        logger.info(f"Data collection completed in {analysis_time:.2f} seconds")
 
         # Generate output based on format
+        logger.info(f"Generating {args.format} output...")
         output_filename = get_output_filename(rhoai_release, args.format, args.output)
+        if output_filename:
+            logger.info(f"Output will be written to: {output_filename}")
 
         if args.format == "json":
             formatted_data = format_json_output(
@@ -283,16 +379,29 @@ def main():
             write_output(formatted_text, output_filename, "text")
 
         # Save raw image data (for debugging/reference)
-        with open("rhoai_images.json", "w") as f:
+        debug_filename = "rhoai_images.json"
+        logger.debug(f"Saving raw image data to: {debug_filename}")
+        with open(debug_filename, "w") as f:
             json.dump(rhoai_images, f, indent=2)
 
+        total_time = time.time() - start_time
+        logger.info(
+            f"RHOAI security analysis completed successfully in {total_time:.2f} seconds"
+        )
+        logger.info(
+            f"Summary: {len(rhoai_images)} images analyzed, {len(unique_total_cves)} unique CVEs found"
+        )
+
     except requests.RequestException as e:
+        logger.error(f"Error accessing Pyxis API: {e}")
         print(f"Error accessing Pyxis API: {e}", file=sys.stderr)
         sys.exit(1)
     except KeyError as e:
+        logger.error(f"Error parsing API response - missing key: {e}")
         print(f"Error parsing API response - missing key: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
+        logger.error(f"Unexpected error: {e}")
         print(f"Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
 
