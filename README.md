@@ -1,47 +1,61 @@
 RHOAI Security Manifest
 =======================
 
-A comprehensive security analysis tool for [Red Hat OpenShift AI](https://www.redhat.com/en/products/ai/openshift-ai) that generates container image manifests and performs optional security scanning with SBOM generation and vulnerability analysis.
+A collection of security analysis tools for [Red Hat OpenShift AI](https://www.redhat.com/en/products/ai/openshift-ai) that generate container image manifests and provide vulnerability information through multiple approaches.
 
 ## Prerequisites
 
 You will need to [login to Red Hat's Container Registry](https://access.redhat.com/articles/RegistryAuthentication) where the Product Images are stored.
 
-This script requires the following tools to be installed:
+## Available Tools
 
-**Core Dependencies (Required)**:
+This repository contains multiple complementary tools for RHOAI security analysis:
+
+### 1. Main Registry-Based Tool (`rhoai_security_manifest.sh`)
+Fetches container images from Red Hat's operator catalog and GitHub manifests.
+
+**Dependencies**:
 - [podman](https://podman.io/) - Container runtime for registry access
 - [jq](https://jqlang.github.io/jq/) - JSON processor for catalog parsing
 - [curl](https://curl.se/) - HTTP client for fetching GitHub manifests
 - [awk](https://www.gnu.org/software/gawk/) - Text processing tool
 - Core utilities: `tr`, `wc`, `cat`, `echo`
 
-**Security Scanning Dependencies (Optional)**:
-- [syft](https://github.com/anchore/syft) - SBOM (Software Bill of Materials) generation
-- [grype](https://github.com/anchore/grype) - Vulnerability scanner
+### 2. Pyxis API Tool (`rhoai_security_pyxis.py`)
+Python script that queries Red Hat's Pyxis API for comprehensive vulnerability information.
 
-The script includes intelligent dependency validation with automatic package manager detection and installation guidance for missing tools.
+**Dependencies**:
+- Python 3.x with `requests` library
+
+### 3. Pyxis Shell Wrapper (`rhoai_security_pyxis.sh`)
+Bash wrapper for direct Pyxis API queries using curl.
+
+**Dependencies**:
+- [curl](https://curl.se/) - HTTP client
+- [jq](https://jqlang.github.io/jq/) - JSON processor
+
+All tools include intelligent dependency validation with automatic package manager detection and installation guidance.
 
 ## Usage
 
-### Basic Usage
+### 1. Main Registry Tool (`rhoai_security_manifest.sh`)
 
-**Simple manifest generation** (RHOAI version 2.22.0, fetches from both Red Hat registry and GitHub):
+**Generate image manifest** (default RHOAI version 2.22.0):
 ```bash
 ./rhoai_security_manifest.sh
 ```
 
-**With comprehensive security scanning**:
+**Generate manifest for specific version**:
 ```bash
-./rhoai_security_manifest.sh --security-scan
+./rhoai_security_manifest.sh --version 2.23.0
 ```
 
-### Command Line Options
+#### Main Registry Tool Options
 
 ```bash
 ./rhoai_security_manifest.sh [OPTIONS]
 
-CORE OPTIONS:
+OPTIONS:
     -v, --version VERSION       RHOAI version (default: 2.22.0)
     -r, --registry URL          Registry URL (default: registry.redhat.io/redhat/redhat-operator-index)
     -o, --openshift VERSION     OpenShift version (default: v4.18)
@@ -51,32 +65,50 @@ CORE OPTIONS:
     --check-deps                Check dependencies only and exit
     --verbose                   Enable verbose output with tool version information
     -h, --help                  Show help message
-
-SECURITY SCANNING OPTIONS:
-    --security-scan             Enable comprehensive security scanning (SBOM + vulnerabilities)
-    --sbom-only                 Generate SBOMs only (no vulnerability scanning)
-    --vuln-only                 Vulnerability scanning only (requires existing SBOMs)
-    --scan-format FORMAT        Output format for security reports (json|sarif|table) (default: json)
-    --fail-on SEVERITY         Exit with error if vulnerabilities >= severity found (critical|high|medium|low)
-    --parallel-scan N           Number of parallel scanning processes (default: 3)
 ```
 
-### Dependency Checking
+### 2. Pyxis API Tool (`rhoai_security_pyxis.py`)
 
-The script automatically validates that all required command-line tools are installed before execution:
+**Query vulnerability information**:
+```bash
+./rhoai_security_pyxis.py --release v2.22
+```
 
-**Critical Dependencies** (script will not run without these):
-- `podman` - Container runtime for accessing Red Hat registry
-- `jq` - JSON processor for parsing catalog data
-- `awk` - Text processing for formatting output
-- `tr` - Character translation for data cleanup
-- `wc` - Word count for statistics
+**Generate JSON report**:
+```bash
+./rhoai_security_pyxis.py --release v2.23 --format json --output rhoai_security_v2.23.json
+```
 
-**Basic Dependencies** (usually pre-installed):
-- `cat` - File concatenation
-- `echo` - Text output
+**Show all CVEs (not truncated)**:
+```bash
+./rhoai_security_pyxis.py --release v2.21 --show-all-cves
+```
 
-#### Check Dependencies Only
+#### Pyxis API Tool Options
+
+```bash
+./rhoai_security_pyxis.py [OPTIONS]
+
+OPTIONS:
+    -r, --release RELEASE       RHOAI release version (default: v2.21)
+    -f, --format FORMAT         Output format: text, json, or csv (default: text)
+    -o, --output OUTPUT         Output file path (default: stdout for text, auto-generated for json/csv)
+    --no-color                  Disable colored output for text format
+    -v, --verbose               Enable verbose logging and progress information
+    --quiet                     Suppress status messages (except errors)
+    --show-all-cves            Show all CVEs for each image without truncation (default: show first 3)
+    -h, --help                  Show help message
+```
+
+### 3. Pyxis Shell Wrapper (`rhoai_security_pyxis.sh`)
+
+Simple curl-based wrapper for direct Pyxis API access. See script source for usage details.
+
+## Dependency Checking
+
+All scripts automatically validate that required tools are installed before execution.
+
+**Check dependencies for main tool**:
 ```bash
 # Validate dependencies without running the script
 ./rhoai_security_manifest.sh --check-deps
@@ -85,13 +117,12 @@ The script automatically validates that all required command-line tools are inst
 ./rhoai_security_manifest.sh --check-deps --verbose
 ```
 
-If dependencies are missing, the script will provide specific installation instructions based on your system's package manager.
+If dependencies are missing, the scripts will provide specific installation instructions based on your system's package manager.
 
-### Environment Variables
+## Environment Variables
 
-You can also configure the script using environment variables:
+You can configure the main registry tool using environment variables:
 
-**Core Configuration**:
 - `RHOAI_VERSION` - RHOAI version to generate manifest for
 - `REGISTRY_URL` - Container registry base URL
 - `OPENSHIFT_VERSION` - OpenShift version for operator index
@@ -101,19 +132,11 @@ You can also configure the script using environment variables:
 - `VERBOSE` - Enable verbose output (true/false)
 - `GITHUB_BASE_URL` - GitHub repository base URL for manifests
 
-**Security Scanning Configuration**:
-- `SECURITY_SCAN` - Enable comprehensive security scanning (true/false)
-- `SBOM_ONLY` - Generate SBOMs only (true/false)
-- `VULN_ONLY` - Vulnerability scanning only (true/false)
-- `SCAN_FORMAT` - Output format for security reports (json/sarif/table)
-- `FAIL_ON_SEVERITY` - Exit with error on vulnerability severity (critical/high/medium/low)
-- `PARALLEL_SCAN` - Number of parallel scanning processes
+## Examples
 
-### Examples
+### Main Registry Tool Examples
 
-#### Basic Manifest Generation
-
-Generate manifest for a different RHOAI version:
+Generate manifest for different RHOAI version:
 ```bash
 ./rhoai_security_manifest.sh --version 2.23.0
 ```
@@ -128,74 +151,56 @@ Generate manifest for OpenShift 4.17:
 ./rhoai_security_manifest.sh --openshift v4.17 --version 2.21.0
 ```
 
-Use a custom registry and output directory:
+Use custom registry and output directory:
 ```bash
 ./rhoai_security_manifest.sh --registry my-registry.com/operator-index --output-dir /tmp/reports
 ```
 
-#### Security Scanning Examples
+### Pyxis API Tool Examples
 
-Comprehensive security analysis with SBOM generation and vulnerability scanning:
+Generate text report for specific version:
 ```bash
-./rhoai_security_manifest.sh --version 2.23.0 --security-scan
+./rhoai_security_pyxis.py --release v2.22 --verbose
 ```
 
-Generate only SBOMs without vulnerability scanning:
+Export CSV format with all CVEs:
 ```bash
-./rhoai_security_manifest.sh --version 2.23.0 --sbom-only
+./rhoai_security_pyxis.py --release v2.23 --format csv --show-all-cves --output security_report.csv
 ```
 
-Perform vulnerability scanning on existing SBOMs:
+JSON format for integration with other tools:
 ```bash
-./rhoai_security_manifest.sh --version 2.23.0 --vuln-only
-```
-
-Security scan with custom output format and failure conditions:
-```bash
-./rhoai_security_manifest.sh --security-scan --scan-format sarif --fail-on critical --output-dir /tmp/security-reports
-```
-
-High-performance scanning with parallel processing:
-```bash
-./rhoai_security_manifest.sh --security-scan --parallel-scan 8 --verbose
-```
-
-Generate human-readable security report:
-```bash
-./rhoai_security_manifest.sh --security-scan --scan-format table --verbose
+./rhoai_security_pyxis.py --release v2.21 --format json --output rhoai_v2.21_security.json
 ```
 
 ## Output
 
-### Basic Output
+### Registry Tool Output
 
-The script generates a text file containing container image URLs from multiple sources:
+The main script generates a text file containing container image URLs from multiple sources:
 - **Red Hat Registry**: Images from the operator catalog
 - **GitHub Manifests**: Additional images from the disconnected install helper repository
 
 The default output filename follows the pattern `rhoai-{version}` (e.g., `rhoai-2220` for version 2.22.0).
 
-### Security Scanning Output
+### Pyxis API Tool Output
 
-When security scanning is enabled, the script creates a structured output directory:
+The Python Pyxis tool provides comprehensive vulnerability information:
 
-```
-./output/
-├── rhoai-{version}-manifest.txt          # Container image list
-├── rhoai-{version}-security-report.json  # Comprehensive security report
-├── sboms/                                 # Software Bill of Materials
-│   ├── {image-name}-sbom.json
-│   └── ...
-└── vulnerabilities/                       # Vulnerability scan results
-    ├── {image-name}-vulnerabilities.{format}
-    └── ...
-```
+**Text Format** (default):
+- Human-readable report with colored output
+- CVE summaries with severity levels
+- Package counts and vulnerability statistics
 
-**Security Report Features**:
-- Aggregate vulnerability counts by severity (Critical, High, Medium, Low)
-- Per-image analysis with package counts and vulnerability summaries
-- JSON format for integration with security toolchains
-- Support for SARIF and table formats for different use cases
+**JSON Format**:
+- Structured data suitable for integration with security tools
+- Complete vulnerability details and metadata
+- Machine-readable format for automation
+
+**CSV Format**:
+- Spreadsheet-compatible output
+- Tabular data for analysis and reporting
+- Easy import into data analysis tools
 
 ## Key Features
 
@@ -203,13 +208,13 @@ When security scanning is enabled, the script creates a structured output direct
 - **Registry Integration**: Queries Red Hat's operator catalog for official images
 - **GitHub Integration**: Fetches additional images from disconnected install manifests
 - **Intelligent Deduplication**: Merges and deduplicates images from multiple sources
+- **API Access**: Direct access to Red Hat Pyxis API for vulnerability data
 
-### Advanced Security Scanning
-- **SBOM Generation**: Creates comprehensive Software Bills of Materials using Syft
-- **Vulnerability Analysis**: Performs detailed vulnerability scanning using Grype
-- **Parallel Processing**: Configurable parallel scanning for improved performance
-- **Multiple Output Formats**: JSON, SARIF, and human-readable table formats
-- **CI/CD Integration**: Configurable failure conditions based on vulnerability severity
+### Comprehensive Security Analysis
+- **Multiple Approaches**: Registry-based image collection and API-based vulnerability analysis
+- **Vulnerability Details**: Detailed CVE information with severity classifications
+- **Multiple Output Formats**: Text, JSON, and CSV formats for different use cases
+- **Package Analysis**: Complete package inventories and vulnerability mappings
 
 ### Robust Error Handling
 - **Comprehensive Validation**: Validates dependencies, inputs, and configurations
@@ -222,6 +227,7 @@ When security scanning is enabled, the script creates a structured output direct
 - **Flexible Configuration**: Support for environment variables and command-line arguments
 - **Verbose Mode**: Detailed progress reporting and diagnostic information
 - **Version Compatibility**: Automatic handling of different RHOAI version formats
+- **Cross-Platform**: Works on Linux, macOS, and Windows (with WSL)
 
 ## Configuration Priority
 
@@ -232,7 +238,17 @@ Settings are applied in the following order (later values override earlier ones)
 
 ## Performance Considerations
 
-- **Parallel Processing**: Default 3 concurrent scans, configurable up to system limits
+- **Efficient Processing**: Optimized for fast container registry queries
 - **Network Optimization**: Intelligent retry logic and timeout handling
 - **Memory Management**: Efficient processing of large image sets
-- **Caching**: Reuses analysis results where appropriate
+- **API Rate Limiting**: Respectful API usage with built-in rate limiting
+
+## Tool Comparison
+
+| Feature | Registry Tool | Pyxis API Tool | Pyxis Shell Wrapper |
+|---------|---------------|----------------|----------------------|
+| **Data Source** | Container registries + GitHub | Red Hat Pyxis API | Red Hat Pyxis API |
+| **Output** | Image list | Vulnerability details | Raw API data |
+| **Formats** | Text | Text, JSON, CSV | JSON |
+| **Dependencies** | podman, jq, curl | Python, requests | curl, jq |
+| **Use Case** | Image collection | Security analysis | Quick API queries |
