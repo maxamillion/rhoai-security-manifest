@@ -36,20 +36,32 @@ def setup_logging(log_level=None, verbose=False):
 
 
 def get_image_name(image):
-    """Extract image name in registry/repository format.
+    """Extract image name in registry/repository format with SHA256 digest.
 
     Args:
         image (dict): Image data from Pyxis API
 
     Returns:
-        str: Image name in format "registry/repository" or fallback value
+        str: Image name in format "registry/repository:sha256_8chars" or fallback value
     """
     try:
+        # Extract registry and repository
         if image.get("repositories") and len(image["repositories"]) > 0:
             registry = image["repositories"][0].get("registry", "")
             repository = image["repositories"][0].get("repository", "")
+
             if registry and repository:
-                return f"{registry}/{repository}"
+                base_name = f"{registry}/{repository}"
+
+                # Try to extract SHA256 digest from image_id field
+                image_id = image.get("image_id", "")
+                if image_id and image_id.startswith("sha256:"):
+                    sha256_hash = image_id.replace("sha256:", "")
+                    if len(sha256_hash) >= 8:
+                        return f"{base_name}:{sha256_hash[:8]}"
+
+                # Return base name if no valid SHA256 found
+                return base_name
 
         # Fallback: try display_data if available for backward compatibility
         if image.get("display_data") and image["display_data"].get("name"):
@@ -352,10 +364,12 @@ def fetch_operator_bundle_images(rhoai_release, pyxis_base_url, logger):
 
             for image_obj in image_data:
                 if image_obj.get("architecture") == "amd64":
-                    operator_bundle_images.append(image_obj)
-                    logger.debug(
-                        f"Added amd64 image: {image_obj.get('_id', 'unknown')}"
-                    )
+                    # filter out ose-cli images, for some reason there's always a few
+                    if "ose-cli" not in image_obj["repositories"][0]["repository"]:
+                        operator_bundle_images.append(image_obj)
+                        logger.debug(
+                            f"Added amd64 image: {image_obj.get('_id', 'unknown')}"
+                        )
 
         logger.info(
             f"Successfully fetched {len(operator_bundle_images)} operator bundle images"
