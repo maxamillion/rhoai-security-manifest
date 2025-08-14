@@ -216,3 +216,5 @@ logs/
 temp/
 
 output/
+
+rhoai_images.json
