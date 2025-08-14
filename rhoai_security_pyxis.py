@@ -11,11 +11,24 @@ from datetime import datetime
 from pprint import pprint
 
 
-def setup_logging(verbose=False):
-    """Configure logging for the application."""
-    log_level = logging.DEBUG if verbose else logging.INFO
+def setup_logging(log_level=None, verbose=False):
+    """Configure logging for the application.
+    
+    Args:
+        log_level (str): Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        verbose (bool): Legacy verbose flag for backward compatibility
+    """
+    # Handle legacy verbose flag
+    if log_level is None:
+        log_level = "DEBUG" if verbose else "INFO"
+    
+    # Convert string to logging level
+    numeric_level = getattr(logging, log_level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError(f'Invalid log level: {log_level}')
+    
     logging.basicConfig(
-        level=log_level,
+        level=numeric_level,
         format="%(asctime)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
@@ -34,6 +47,8 @@ Examples:
   %(prog)s -r v2.23 --format csv --output rhoai_security_v2.23.csv
   %(prog)s --release v2.24 --format text --output rhoai_report.txt --verbose
   %(prog)s --release v2.21 --show-all-cves
+  %(prog)s --release v2.22 --log-level WARNING
+  %(prog)s --release v2.23 --log-level DEBUG --format json
         """,
     )
     parser.add_argument(
@@ -67,9 +82,15 @@ Examples:
         "--quiet", action="store_true", help="Suppress status messages (except errors)"
     )
     parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default=None,
+        help="Set logging level (default: INFO, or DEBUG if --verbose is used)",
+    )
+    parser.add_argument(
         "--show-all-cves",
         action="store_true",
-        help="Show all CVEs for each image without truncation (default: show first 3)"
+        help="Show all CVEs for each image without truncation (default: show first 3)",
     )
     return parser.parse_args()
 
@@ -238,11 +259,103 @@ def write_output(content, filename, format_type):
         sys.exit(1)
 
 
+def fetch_operator_bundle_images(rhoai_release, pyxis_base_url, logger):
+    """Fetch additional RHOAI images from operator bundles."""
+    logger.info("Fetching additional images from operator bundles...")
+
+    # Convert release format: v2.21 -> 2.21.0
+    if rhoai_release.startswith("v"):
+        if len(rhoai_release.split(".")) == 2:
+            bundle_release = rhoai_release[1:] + ".0"
+        elif len(rhoai_release.split(".")) == 3:
+            bundle_release = rhoai_release[1:]
+    else:
+        bundle_release = rhoai_release + ".0"
+
+    logger.debug(f"Using operator bundle release format: {bundle_release}")
+
+    operator_bundle_images = []
+
+    try:
+        # Query operator bundles endpoint
+        pyxis_operator_bundle_url = f"{pyxis_base_url}/v1/operators/bundles"
+        operator_bundle_params = {
+            "filter": f"csv_name=='rhods-operator.{bundle_release}'"
+        }
+
+        logger.debug(f"Querying operator bundles: {pyxis_operator_bundle_url}")
+        logger.debug(f"Bundle filter: {operator_bundle_params['filter']}")
+
+        operator_bundle_response = requests.get(
+            pyxis_operator_bundle_url, params=operator_bundle_params
+        )
+        operator_bundle_response.raise_for_status()
+        operator_bundle_data = operator_bundle_response.json()["data"]
+
+        if not operator_bundle_data:
+            logger.error(f"No operator bundles found for release {bundle_release}")
+            return operator_bundle_images
+
+        # Sort by creation date and get the most recent
+        operators_sorted_by_date = sorted(
+            operator_bundle_data, key=lambda operator: operator["creation_date"]
+        )
+        latest_operator = operators_sorted_by_date[-1]
+
+        logger.info(
+            f"Found operator bundle with {len(latest_operator.get('related_images', []))} related images"
+        )
+
+        # Process each related image
+        pyxis_images_url = f"{pyxis_base_url}/v1/images"
+
+        for idx, image in enumerate(latest_operator.get("related_images", []), 1):
+            image_digest = image["digest"]
+            logger.debug(
+                f"Processing operator bundle image {idx}: {image_digest[:20]}..."
+            )
+
+            image_digest_params = {
+                "filter": f"(docker_image_digest=='{image_digest}' or repositories.manifest_list_digest=='{image_digest}')"
+            }
+
+            image_response = requests.get(pyxis_images_url, params=image_digest_params)
+            image_response.raise_for_status()
+            image_data = image_response.json()["data"]
+
+            for image_obj in image_data:
+                if image_obj.get("architecture") == "amd64":
+                    # Add display_data for consistency with main script
+                    if "display_data" not in image_obj:
+                        image_obj["display_data"] = {
+                            "name": f"operator-bundle-image-{image_digest[:12]}"
+                        }
+                    operator_bundle_images.append(image_obj)
+                    logger.debug(
+                        f"Added amd64 image: {image_obj.get('_id', 'unknown')}"
+                    )
+
+        logger.info(
+            f"Successfully fetched {len(operator_bundle_images)} operator bundle images"
+        )
+        return operator_bundle_images
+
+    except requests.RequestException as e:
+        logger.warning(f"Failed to fetch operator bundle images: {e}")
+        return operator_bundle_images
+    except KeyError as e:
+        logger.warning(f"Unexpected operator bundle API response structure: {e}")
+        return operator_bundle_images
+    except Exception as e:
+        logger.warning(f"Error processing operator bundle images: {e}")
+        return operator_bundle_images
+
+
 def main():
     args = parse_arguments()
 
     # Setup logging based on arguments
-    logger = setup_logging(args.verbose)
+    logger = setup_logging(args.log_level, args.verbose)
 
     # Configure quiet mode
     if args.quiet:
@@ -326,6 +439,19 @@ def main():
                 )
 
         logger.info(f"Total images selected for analysis: {len(rhoai_images)}")
+
+        # Fetch additional images from operator bundles
+        operator_bundle_images = fetch_operator_bundle_images(
+            rhoai_release, pyxis_base_url, logger
+        )
+        if operator_bundle_images:
+            logger.info(
+                f"Adding {len(operator_bundle_images)} operator bundle images to analysis"
+            )
+            rhoai_images.extend(operator_bundle_images)
+            logger.info(f"Updated total images for analysis: {len(rhoai_images)}")
+        else:
+            logger.info("No operator bundle images found or accessible")
 
         # Collect CVE data for each image
         logger.info("Collecting CVE data for each image...")
