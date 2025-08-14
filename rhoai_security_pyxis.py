@@ -13,7 +13,7 @@ from pprint import pprint
 
 def setup_logging(log_level=None, verbose=False):
     """Configure logging for the application.
-    
+
     Args:
         log_level (str): Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         verbose (bool): Legacy verbose flag for backward compatibility
@@ -21,18 +21,45 @@ def setup_logging(log_level=None, verbose=False):
     # Handle legacy verbose flag
     if log_level is None:
         log_level = "DEBUG" if verbose else "INFO"
-    
+
     # Convert string to logging level
     numeric_level = getattr(logging, log_level.upper(), None)
     if not isinstance(numeric_level, int):
-        raise ValueError(f'Invalid log level: {log_level}')
-    
+        raise ValueError(f"Invalid log level: {log_level}")
+
     logging.basicConfig(
         level=numeric_level,
         format="%(asctime)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     return logging.getLogger(__name__)
+
+
+def get_image_name(image):
+    """Extract image name in registry/repository format.
+
+    Args:
+        image (dict): Image data from Pyxis API
+
+    Returns:
+        str: Image name in format "registry/repository" or fallback value
+    """
+    try:
+        if image.get("repositories") and len(image["repositories"]) > 0:
+            registry = image["repositories"][0].get("registry", "")
+            repository = image["repositories"][0].get("repository", "")
+            if registry and repository:
+                return f"{registry}/{repository}"
+
+        # Fallback: try display_data if available for backward compatibility
+        if image.get("display_data") and image["display_data"].get("name"):
+            return image["display_data"]["name"]
+
+        # Final fallback: use image ID if available
+        return image.get("_id", "unknown")
+
+    except (KeyError, TypeError, IndexError):
+        return "unknown"
 
 
 def parse_arguments():
@@ -147,7 +174,7 @@ def format_text_output(images_data, total_cves, use_color=True, show_all_cves=Fa
     output_lines.append("-" * 50)
 
     for i, image in enumerate(images_data, 1):
-        output_lines.append(f"{OKCYAN}[{i}] {image['display_data']['name']}{ENDC}")
+        output_lines.append(f"{OKCYAN}[{i}] {get_image_name(image)}{ENDC}")
         output_lines.append(f"    ID: {image['_id']}")
 
         advisory_url = f"https://access.redhat.com/errata/{image['repositories'][0]['_links']['image_advisory']['href'].split('/')[-1]}"
@@ -220,7 +247,7 @@ def format_csv_output(images_data, total_cves):
 
         csv_data.append(
             {
-                "image_name": image["display_data"]["name"],
+                "image_name": get_image_name(image),
                 "image_id": image["_id"],
                 "advisory_url": advisory_url,
                 "freshness_grade": image["freshness_grades"][0]["grade"],
@@ -325,11 +352,6 @@ def fetch_operator_bundle_images(rhoai_release, pyxis_base_url, logger):
 
             for image_obj in image_data:
                 if image_obj.get("architecture") == "amd64":
-                    # Add display_data for consistency with main script
-                    if "display_data" not in image_obj:
-                        image_obj["display_data"] = {
-                            "name": f"operator-bundle-image-{image_digest[:12]}"
-                        }
                     operator_bundle_images.append(image_obj)
                     logger.debug(
                         f"Added amd64 image: {image_obj.get('_id', 'unknown')}"
@@ -457,7 +479,7 @@ def main():
         logger.info("Collecting CVE data for each image...")
 
         for image_idx, image in enumerate(rhoai_images, 1):
-            image_name = image.get("display_data", {}).get("name", "unknown")
+            image_name = get_image_name(image)
             logger.info(
                 f"Analyzing CVEs for image {image_idx}/{len(rhoai_images)}: {image_name}"
             )
