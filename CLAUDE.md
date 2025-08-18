@@ -4,13 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repository contains a single-purpose security manifest generator for Red Hat OpenShift AI (RHOAI). The script queries container registries to extract and list all container images associated with a specific RHOAI version for security scanning and compliance purposes.
+This repository contains security analysis tools for Red Hat OpenShift AI (RHOAI):
+
+1. **Security Manifest Generator** (`rhoai_security_manifest.sh`) - Queries container registries to extract and list container images
+2. **Security Data Analyzer** (`rhoai_security_pyxis.py`) - Fetches detailed security information including CVEs and freshness grades from Red Hat Pyxis API
+3. **Security Dashboard** (`rhoai_security_dashboard.py`) - Interactive Streamlit web application for visualizing security data
 
 ## Architecture
 
 ### Core Components
 
-**Main Script**: `rhoai_security_manifest.sh` - A comprehensive bash script that follows a modular function-based architecture:
+**Security Manifest Generator**: `rhoai_security_manifest.sh` - A comprehensive bash script that follows a modular function-based architecture:
+
+**Security Data Analyzer**: `rhoai_security_pyxis.py` - Python script that queries Red Hat Pyxis API for detailed security information:
+- **API Integration**: Direct queries to Red Hat Pyxis container security database
+- **Data Processing**: CVE analysis, freshness grade assessment, advisory link generation
+- **Output Formats**: JSON, CSV, and formatted text output with color coding
+- **Comprehensive Coverage**: Includes both repository images and operator bundle images
+
+**Security Dashboard**: `rhoai_security_dashboard.py` - Streamlit web application for interactive security data visualization:
+- **Multi-tab Interface**: Security Overview, Image Details, and CVE Analysis tabs
+- **Interactive Charts**: Freshness grade distribution, CVE frequency analysis, vulnerability trends
+- **Data Integration**: Loads JSON output from Pyxis analyzer or executes script dynamically
+- **Red Hat Styling**: Professional interface matching Red Hat design patterns
+
+**Bash Script Architecture** (`rhoai_security_manifest.sh`):
 
 - **Configuration Layer**: Environment variables with sensible defaults for RHOAI version, registry URLs, and output options
 - **Validation Layer**: Comprehensive dependency checking and input validation with intelligent error reporting
@@ -38,7 +56,37 @@ The script queries Red Hat's operator index container, extracts catalog.json, fi
 
 ## Common Commands
 
-### Basic Usage
+### Security Dashboard (Interactive Web Interface)
+```bash
+# Launch the security dashboard (recommended for most users)
+./run_dashboard.sh
+
+# Or manually with Streamlit
+streamlit run rhoai_security_dashboard.py
+
+# Install dashboard dependencies (with uv - recommended)
+./run_dashboard.sh
+
+# Or manually with uv
+uv venv && source .venv/bin/activate && uv pip install -r requirements.txt
+
+# Or with pip
+pip install -r requirements.txt
+```
+
+### Security Data Analysis (Command Line)
+```bash
+# Generate comprehensive security report (JSON format)
+python3 ./rhoai_security_pyxis.py --release v2.22 --format json
+
+# Generate human-readable security report
+python3 ./rhoai_security_pyxis.py --release v2.21 --format text --show-all-cves
+
+# Generate CSV for spreadsheet analysis
+python3 ./rhoai_security_pyxis.py --release v2.23 --format csv --output security_report.csv
+```
+
+### Basic Manifest Generation
 ```bash
 # Generate manifest with defaults (RHOAI 2.22.0)
 ./rhoai_security_manifest.sh

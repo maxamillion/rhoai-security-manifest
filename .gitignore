@@ -218,3 +218,5 @@ temp/
 output/
 
 rhoai_images.json
+rhoai_security_*.json
+test_data.json
