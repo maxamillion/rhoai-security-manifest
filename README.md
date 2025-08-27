@@ -1,44 +1,68 @@
 RHOAI Security Manifest
 =======================
 
-A collection of security analysis tools for [Red Hat OpenShift AI](https://www.redhat.com/en/products/ai/openshift-ai) that generate container image manifests and provide vulnerability information through multiple approaches.
-
-## Prerequisites
-
-You will need to [login to Red Hat's Container Registry](https://access.redhat.com/articles/RegistryAuthentication) where the Product Images are stored.
+A comprehensive collection of security analysis tools for [Red Hat OpenShift AI](https://www.redhat.com/en/products/ai/openshift-ai) that generate container image manifests and provide vulnerability information through multiple complementary approaches including interactive dashboards.
 
 ## Available Tools
 
-This repository contains multiple complementary tools for RHOAI security analysis:
+This repository contains multiple integrated tools for comprehensive RHOAI security analysis:
 
-### 1. Main Registry-Based Tool (`rhoai_security_manifest.sh`)
-Fetches container images from Red Hat's operator catalog and GitHub manifests.
+### 1. Registry-Based Manifest Generator (`rhoai_security_manifest.sh`)
+Bash script that fetches container images from Red Hat's operator catalog and GitHub manifests and provides a simple evaluation of their security status using [syft](https://github.com/anchore/syft) and [grype](https://github.com/anchore/grype).
 
 **Dependencies**:
 - [podman](https://podman.io/) - Container runtime for registry access
 - [jq](https://jqlang.github.io/jq/) - JSON processor for catalog parsing
 - [curl](https://curl.se/) - HTTP client for fetching GitHub manifests
 - [awk](https://www.gnu.org/software/gawk/) - Text processing tool
+- [syft](https://github.com/anchore/syft) - Container SBOM tool
+- [grype](https://github.com/anchore/grype) - Container security analysis tool
 - Core utilities: `tr`, `wc`, `cat`, `echo`
 
-### 2. Pyxis API Tool (`rhoai_security_pyxis.py`)
-Python script that queries Red Hat's Pyxis API for comprehensive vulnerability information.
+### 2. Security Data Analyzer (`rhoai_security_pyxis.py`)
+Python script that queries Red Hat's Pyxis API for comprehensive vulnerability information including CVEs, freshness grades, and security advisories.
 
 **Dependencies**:
-- Python 3.x with `requests` library
+- Python 3.7+ with `requests` library
 
-### 3. Pyxis Shell Wrapper (`rhoai_security_pyxis.sh`)
-Bash wrapper for direct Pyxis API queries using curl.
+### 3. Interactive Security Dashboard (Streamlit)
+Web-based dashboard (`rhoai_security_dashboard.py`) for visualizing security data with Red Hat-inspired design.
 
 **Dependencies**:
-- [curl](https://curl.se/) - HTTP client
-- [jq](https://jqlang.github.io/jq/) - JSON processor
+- Python 3.7+ with `streamlit`, `pandas`, `plotly`
 
-All tools include intelligent dependency validation with automatic package manager detection and installation guidance.
+## Quick Start
 
-## Usage
+### 🚀 Interactive Security Dashboard (Recommended)
+**Launch the Streamlit dashboard** (easiest way to get started):
+```bash
+# Quick start with automatic dependency management
+./run_dashboard.sh
 
-### 1. Main Registry Tool (`rhoai_security_manifest.sh`)
+# Manual start (requires pip install -r requirements.txt or similar with uv)
+streamlit run rhoai_security_dashboard.py
+```
+Dashboard available at: `http://localhost:8501`
+
+### ⚡ Using Make (Recommended for automation)
+**Complete workflow automation** using the included Makefile:
+```bash
+# Show all available commands
+make help
+
+# Quick development setup
+make dev-setup
+
+# Generate all security reports
+make full-analysis
+
+# Generate reports for specific version
+make pyxis-json RHOAI_RELEASE=v2.23
+```
+
+## Detailed Usage
+
+### 1. Registry-Based Manifest Generator (`rhoai_security_manifest.sh`)
 
 **Generate image manifest** (default RHOAI version 2.22.0):
 ```bash
@@ -50,7 +74,7 @@ All tools include intelligent dependency validation with automatic package manag
 ./rhoai_security_manifest.sh --version 2.23.0
 ```
 
-#### Main Registry Tool Options
+#### Registry Tool Options
 
 ```bash
 ./rhoai_security_manifest.sh [OPTIONS]
@@ -67,7 +91,7 @@ OPTIONS:
     -h, --help                  Show help message
 ```
 
-### 2. Pyxis API Tool (`rhoai_security_pyxis.py`)
+### 2. Security Data Analyzer (`rhoai_security_pyxis.py`)
 
 **Query vulnerability information**:
 ```bash
@@ -84,7 +108,7 @@ OPTIONS:
 ./rhoai_security_pyxis.py --release v2.21 --show-all-cves
 ```
 
-#### Pyxis API Tool Options
+#### Security Analyzer Options
 
 ```bash
 ./rhoai_security_pyxis.py [OPTIONS]
@@ -100,9 +124,20 @@ OPTIONS:
     -h, --help                  Show help message
 ```
 
-### 3. Pyxis Shell Wrapper (`rhoai_security_pyxis.sh`)
+### 3. Streamlit Dashboard (`rhoai_security_dashboard.py`)
+Interactive web application with security overview, image details, and CVE analysis:
 
-Simple curl-based wrapper for direct Pyxis API access. See script source for usage details.
+**Features**:
+- 🔍 Security Overview with summary metrics
+- 📋 Filterable image details with expandable CVE information
+- 🚨 Comprehensive CVE analysis with Red Hat advisory links
+- 📊 Interactive charts and visualizations
+
+### 4. Shell Wrappers
+
+Direct API access tools for automation and scripting:
+- `rhoai_security_pyxis.sh` - Direct Pyxis API queries
+- `rhoai_security_manifest_pyxis.sh` - Combined operations
 
 ## Dependency Checking
 
@@ -134,7 +169,43 @@ You can configure the main registry tool using environment variables:
 
 ## Examples
 
-### Main Registry Tool Examples
+### Make-based Workflows (Recommended)
+
+**Complete development setup**:
+```bash
+# Set up everything: dependencies, sample data, dashboard ready
+make dev-setup
+
+# Show current configuration
+make show-config
+```
+
+**Generate comprehensive security analysis**:
+```bash
+# Full analysis with manifest + all Pyxis reports
+make full-analysis
+
+# Generate reports for specific RHOAI version
+make manifest RHOAI_VERSION=2.23.0
+make pyxis-all RHOAI_RELEASE=v2.23
+```
+
+**Dashboard workflows**:
+```bash
+# Generate fresh data and start Streamlit dashboard
+make dashboard-data RHOAI_RELEASE=v2.22
+./run_dashboard.sh
+```
+
+**Release preparation**:
+```bash
+# Generate all reports for release documentation
+make release-reports RHOAI_VERSION=2.24.0 RHOAI_RELEASE=v2.24
+```
+
+### Direct Tool Examples
+
+**Registry Tool Examples**:
 
 Generate manifest for different RHOAI version:
 ```bash
@@ -156,7 +227,7 @@ Use custom registry and output directory:
 ./rhoai_security_manifest.sh --registry my-registry.com/operator-index --output-dir /tmp/reports
 ```
 
-### Pyxis API Tool Examples
+**Security Analyzer Examples**:
 
 Generate text report for specific version:
 ```bash
@@ -173,6 +244,14 @@ JSON format for integration with other tools:
 ./rhoai_security_pyxis.py --release v2.21 --format json --output rhoai_v2.21_security.json
 ```
 
+**Dashboard Integration Examples**:
+
+Generate data for dashboard consumption:
+```bash
+# For Streamlit dashboard
+./rhoai_security_pyxis.py --release v2.22 --format json --output dashboard_data.json
+```
+
 ## Output
 
 ### Registry Tool Output
@@ -183,24 +262,37 @@ The main script generates a text file containing container image URLs from multi
 
 The default output filename follows the pattern `rhoai-{version}` (e.g., `rhoai-2220` for version 2.22.0).
 
-### Pyxis API Tool Output
+### Security Analyzer Output
 
-The Python Pyxis tool provides comprehensive vulnerability information:
+The Python Pyxis tool provides comprehensive vulnerability information in multiple formats:
 
 **Text Format** (default):
 - Human-readable report with colored output
 - CVE summaries with severity levels
 - Package counts and vulnerability statistics
+- Freshness grades and advisory links
 
 **JSON Format**:
 - Structured data suitable for integration with security tools
 - Complete vulnerability details and metadata
-- Machine-readable format for automation
+- Machine-readable format for automation and dashboard consumption
+- Includes image metadata, CVE lists, and advisory URLs
 
 **CSV Format**:
 - Spreadsheet-compatible output
 - Tabular data for analysis and reporting
 - Easy import into data analysis tools
+
+### Dashboard Output
+
+The repository includes multiple dashboard interfaces for interactive security analysis:
+
+**Streamlit Dashboard**:
+- **Security Overview**: Summary metrics and distribution charts
+- **Image Details**: Filterable table with expandable CVE details
+- **CVE Analysis**: Comprehensive vulnerability tracking with Red Hat advisory links
+- Real-time data generation and file loading capabilities
+
 
 ## Key Features
 
@@ -210,11 +302,25 @@ The Python Pyxis tool provides comprehensive vulnerability information:
 - **Intelligent Deduplication**: Merges and deduplicates images from multiple sources
 - **API Access**: Direct access to Red Hat Pyxis API for vulnerability data
 
+### Interactive Dashboards
+- **Streamlit Dashboard**: Web-based interface with Red Hat-inspired design
+- **Real-time Data Integration**: Generate fresh security data from within dashboard interfaces
+- **Multi-format Data Support**: JSON, CSV, and text format integration
+- **Responsive Design**: Mobile-friendly interfaces for on-the-go security analysis
+
 ### Comprehensive Security Analysis
 - **Multiple Approaches**: Registry-based image collection and API-based vulnerability analysis
-- **Vulnerability Details**: Detailed CVE information with severity classifications
-- **Multiple Output Formats**: Text, JSON, and CSV formats for different use cases
+- **Vulnerability Details**: Detailed CVE information with severity classifications and advisory links
+- **Freshness Grades**: Security assessment grades from A (best) to F (worst)
 - **Package Analysis**: Complete package inventories and vulnerability mappings
+- **Trend Analysis**: Visual charts showing security posture distribution
+
+### Automation & Workflow Integration
+- **Make-based Automation**: Comprehensive Makefile with 40+ targets for workflow automation
+- **Dependency Management**: Intelligent package manager detection with uv and npm support
+- **Release Workflows**: Automated report generation for release documentation
+- **Development Setup**: One-command environment setup with `make dev-setup`
+- **Continuous Integration**: Testing targets for CI/CD pipeline integration
 
 ### Robust Error Handling
 - **Comprehensive Validation**: Validates dependencies, inputs, and configurations
@@ -225,6 +331,7 @@ The Python Pyxis tool provides comprehensive vulnerability information:
 ### Enhanced Usability
 - **Intelligent Defaults**: Sensible default configurations for common use cases
 - **Flexible Configuration**: Support for environment variables and command-line arguments
+- **Quick Start Scripts**: One-click dashboard launch with `./run_dashboard.sh`
 - **Verbose Mode**: Detailed progress reporting and diagnostic information
 - **Version Compatibility**: Automatic handling of different RHOAI version formats
 - **Cross-Platform**: Works on Linux, macOS, and Windows (with WSL)
@@ -245,10 +352,30 @@ Settings are applied in the following order (later values override earlier ones)
 
 ## Tool Comparison
 
-| Feature | Registry Tool | Pyxis API Tool | Pyxis Shell Wrapper |
-|---------|---------------|----------------|----------------------|
-| **Data Source** | Container registries + GitHub | Red Hat Pyxis API | Red Hat Pyxis API |
-| **Output** | Image list | Vulnerability details | Raw API data |
-| **Formats** | Text | Text, JSON, CSV | JSON |
-| **Dependencies** | podman, jq, curl | Python, requests | curl, jq |
-| **Use Case** | Image collection | Security analysis | Quick API queries |
+| Feature | Registry Tool | Security Analyzer | Streamlit Dashboard | Shell Wrappers |
+|---------|---------------|-------------------|-------------------|----------------|
+| **Data Source** | Registries + GitHub | Red Hat Pyxis API | Pyxis + JSON files | Pyxis API |
+| **Output** | Image list | Vulnerability details | Interactive web UI | Raw API data |
+| **Formats** | Text | Text, JSON, CSV | Web interface | JSON |
+| **Dependencies** | podman, jq, curl | Python, requests | Streamlit, pandas, plotly | curl, jq |
+| **Use Case** | Image collection | Security analysis | Interactive analysis | Quick API queries |
+| **Interface** | Command-line | Command-line | Web browser | Command-line |
+| **Visualization** | None | Text/colored output | Charts and tables | None |
+| **Real-time Data** | No | Yes | Yes (with script execution) | Yes |
+
+## Repository Structure
+
+```
+rhoai-security-manifest/
+├── rhoai_security_manifest.sh          # Registry-based manifest generator
+├── rhoai_security_pyxis.py             # Security data analyzer (main tool)
+├── rhoai_security_dashboard.py         # Streamlit web dashboard
+├── run_dashboard.sh                     # Quick dashboard launcher
+├── Makefile                            # Workflow automation targets
+├── requirements.txt                     # Python dependencies
+├── rhoai_security_*.sh                 # Additional shell wrappers
+├── output/                             # Generated reports and manifests
+├── README.md                           # This documentation
+├── DASHBOARD_README.md                 # Streamlit dashboard documentation
+└── CLAUDE.md                          # Claude Code integration guidance
+```
